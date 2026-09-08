@@ -1,11 +1,3 @@
-"""Chef ROS : agrege l'etat gamepad (boutons/analogiques) publie par les noeuds
-de comportement et le republie sur LCM a frequence fixe -- meme canal/URL que
-gamepad_api.py, a garder synchronise. Pilote aussi la choregraphie GRAFCET
-marche+prise+transport+depose via des Actions ROS (stand/walk_to/lift/pivot/
-depose). La sequence tourne dans le thread principal, un MultiThreadedExecutor
-traite les callbacks ROS dans un thread separe.
-"""
-
 import signal
 import sys
 import threading
@@ -130,24 +122,6 @@ class ChefNode(Node):
         self.get_logger().info(f"--- etape {step} ---")
 
     def run_sequence(self) -> None:
-        """GRAFCET marche+prise+pivot (voir capture utilisateur du 08/09) --
-        etapes numerotees comme _publish_step() pour matcher le schema.
-        Etape 20 "Demande Localisation" existe pour la tracabilite mais
-        n'appelle pas encore la vision : le marqueur ArUco est perdu a
-        courte distance (cf memoire projet), pinch_x reste donc fixe
-        (PROVEN_PINCH_X) pour l'instant.
-
-        Transport+depose (etapes 60-120 du schema, marche EN TENANT le
-        carton apres le pivot) retire le 08/09 apres test : la trace
-        sim_state montre un pic anormal de hauteur (z 0.75 -> 0.94) au
-        moment ou free_legs_for_walk rend les jambes a la marche RL --
-        chute quasi immediate ensuite (z<0.15, tilt>100deg, jamais
-        recupere), confirme visuellement par l'utilisateur ("il s'est
-        redresse et c'est parti en vrille"). Le pivot lui-meme (etape 60)
-        est stable -- seul le relachement des jambes vers la marche pose
-        probleme. En attendant d'investiguer ce point precis, pivot()
-        termine sa propre sequence (depivote + relache, comportement par
-        defaut) et la choregraphie s'arrete la, suivie d'un stand()."""
         WALK_DURATION = 3.0
         TURN_CORRECTION = 0.0
         WALK_STANCE_SCALE = 4.5
