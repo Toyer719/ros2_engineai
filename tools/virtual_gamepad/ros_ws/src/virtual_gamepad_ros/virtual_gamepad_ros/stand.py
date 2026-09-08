@@ -7,8 +7,8 @@ from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from std_msgs.msg import Bool
 
-from virtual_gamepad_interfaces.action import Stand  # noqa: E402
-from virtual_gamepad_ros.field_topics import field_topic  # noqa: E402
+from virtual_gamepad_interfaces.action import Stand
+from virtual_gamepad_ros.field_topics import field_topic
 
 
 class StandActionServer(Node):
@@ -38,11 +38,6 @@ class StandActionServer(Node):
         result = Stand.Result()
         settle_seconds = goal_handle.request.settle_seconds
 
-        # Pulse LB+A puis relache -- meme principe que send_raw()
-        # (gamepad_api.py) et l'ancien Conductor._send_button_combo() :
-        # un combo est un appui BREF, pas un maintien continu. Le tenir
-        # enfonce pendant toute la duree de stabilisation (bug corrige ici)
-        # divergeait du comportement prouve par main.py/core/chef.py.
         self.get_logger().info("Passage en pd_stand...")
         self._lb_pub.publish(Bool(data=True))
         self._a_pub.publish(Bool(data=True))
@@ -55,7 +50,6 @@ class StandActionServer(Node):
         self._lb_pub.publish(Bool(data=False))
         self._a_pub.publish(Bool(data=False))
 
-        # Boutons deja relaches -- attente separee de la stabilisation.
         if not self._wait_cancelable(goal_handle, settle_seconds):
             goal_handle.canceled()
             result.success = False
@@ -70,10 +64,6 @@ class StandActionServer(Node):
 def main():
     rclpy.init()
     node = StandActionServer()
-    # MultiThreadedExecutor : meme raison que walk_to.py -- l'execution d'un
-    # goal (boucle bloquante ci-dessus, via create_rate) tourne dans son
-    # propre thread pendant qu'un autre thread reste libre pour traiter les
-    # requetes de cancel entrantes.
     executor = MultiThreadedExecutor()
     executor.add_node(node)
     try:

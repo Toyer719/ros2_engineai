@@ -9,19 +9,15 @@ from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 
 sys.path.insert(0, "/home/equansrobotic/stagiaire_1/tools/joint_angle_commander")
-from lever import Lever  # noqa: E402
+from lever import Lever
 
 sys.path.insert(0, "/home/equansrobotic/stagiaire_1/tools/robot_arm_ik")
-from lift_carton import (  # noqa: E402
+from lift_carton import (
     LEFT_CHAIN, RIGHT_CHAIN, HAND_OFFSET_LEFT, HAND_OFFSET_RIGHT, solve_ik, ease,
 )
 
-from virtual_gamepad_interfaces.action import Pivot  # noqa: E402
+from virtual_gamepad_interfaces.action import Pivot
 
-# Duplique volontairement les constantes de lift.py (memes indices/valeurs) :
-# pivot.py doit republier EN CONTINU les memes angles bras/jambes que lift.py
-# a etablis, /motion/joint_override_command etant un REMPLACEMENT COMPLET a
-# chaque message (pas une fusion, voir joint_override_node.cc et Lift.action).
 LEFT_JOINT_INDICES = [13, 14, 15, 16, 17]
 RIGHT_JOINT_INDICES = [18, 19, 20, 21, 22]
 WAIST_JOINT_INDEX = 12
@@ -103,20 +99,6 @@ class PivotActionServer(Node):
             result.success = False
             return result
 
-        # REJOUE exactement le meme chemin que lift.py (approche a g.pinch_z
-        # -> serrage a g.pinch_z -> montee PROGRESSIVE jusqu'a g.lift_z, meme
-        # boucle que lift.py::_execute "levee") -- PAS un solve_ik direct
-        # vers la position finale (24/08, retour utilisateur en direct :
-        # "il le lache pour pivoter"). solve_ik est un solveur ITERATIF/LOCAL
-        # sur un bras redondant : une cible cartesienne identique atteinte
-        # par un chemin de warm-start DIFFERENT (ici : un seul saut depuis
-        # Q_HOME) peut converger vers une solution articulaire DIFFERENTE de
-        # celle que lift.py a atteinte via sa propre rampe -- meme position
-        # de main nominale, mais un SAUT d'angles articulaires au premier
-        # message de ce node, qui deplace/lache la prise. g.lift_z (deja
-        # present dans Pivot.action mais jamais utilise avant ce fix) =
-        # hauteur ACTUELLEMENT tenue (sortie de lift.py) ; g.pinch_z =
-        # hauteur D'ORIGINE (avant la levee), comme dans Lift.action.
         pinch_L = _rotate_xy([g.pinch_x, g.pinch_y, g.pinch_z], g.pinch_yaw_offset)
         pinch_R = _rotate_xy([g.pinch_x, -g.pinch_y, g.pinch_z], g.pinch_yaw_offset)
         q_pinch_L = solve_ik(LEFT_CHAIN, HAND_OFFSET_LEFT, pinch_L, Q_LEFT_HOME)
@@ -135,16 +117,11 @@ class PivotActionServer(Node):
             q_squeeze_R = solve_ik(RIGHT_CHAIN, HAND_OFFSET_RIGHT,
                                     _rotate_xy([g.pinch_x, -g.squeeze_y, z], g.pinch_yaw_offset),
                                     q_squeeze_R, iters=30)
-        # q_squeeze_L/R representent maintenant la MEME solution articulaire
-        # que lift.py a atteinte -- ce replai est fait EN MEMOIRE (pas de
-        # publication intermediaire), le premier message reellement publie
-        # ci-dessous est deja a la position finale, continu avec ce que
-        # lift.py tenait.
 
         leg_targets = [
             (idx, target * g.walk_stance_scale, kp, kd) for idx, target, kp, kd in LEG_JOINTS
         ]
-        lever.set_gains(WAIST_JOINT_INDEX, 150.0, 3.0)  # meme gains que lift_carton_real.py
+        lever.set_gains(WAIST_JOINT_INDEX, 150.0, 3.0)
 
         angle_target = np.radians(g.angle_deg)
 
@@ -221,7 +198,6 @@ class PivotActionServer(Node):
 def main():
     rclpy.init()
     node = PivotActionServer()
-    # MultiThreadedExecutor : meme raison que lift.py/walk_to.py/stand.py.
     executor = MultiThreadedExecutor()
     executor.add_node(node)
     try:

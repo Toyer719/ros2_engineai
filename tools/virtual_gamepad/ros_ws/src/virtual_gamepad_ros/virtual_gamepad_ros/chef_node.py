@@ -19,10 +19,10 @@ from rclpy.node import Node
 from std_msgs.msg import Bool, Float32, Int32
 
 sys.path.insert(0, "/home/equansrobotic/engineai_robotics_native_sdk/tools/virtual_gamepad")
-from lcm_msgs.data import GamepadKeys  # noqa: E402
+from lcm_msgs.data import GamepadKeys
 
-from virtual_gamepad_interfaces.action import Depose, Lift, Pivot, Stand, WalkTo  # noqa: E402
-from virtual_gamepad_ros.field_topics import ANALOG_INDEX, BUTTON_INDEX, field_topic  # noqa: E402
+from virtual_gamepad_interfaces.action import Depose, Lift, Pivot, Stand, WalkTo
+from virtual_gamepad_ros.field_topics import ANALOG_INDEX, BUTTON_INDEX, field_topic
 
 LCM_URL = "udpm://239.255.76.67:7667?ttl=1"
 CHANNEL = "virtual_gamepad/gamepad_keys"
@@ -58,7 +58,6 @@ class ChefNode(Node):
 
         self.create_timer(self._period, self._publish_to_lcm)
 
-    # --- Etat gamepad -> LCM ---------------------------------------------------
 
     def _button_cb(self, idx: int):
         def cb(msg: Bool) -> None:
@@ -164,7 +163,6 @@ class ChefNode(Node):
         self.stand(settle_seconds=3.0)
 
         self._publish_step(20)
-        # Localisation non branchee (voir docstring) -- pinch_x fixe et deja valide.
         pinch_x = PROVEN_PINCH_X
 
         self._publish_step(30)
@@ -188,10 +186,6 @@ class ChefNode(Node):
             self.get_logger().error("run_sequence : lift() a echoue (levee) -- arret.")
             return
 
-        # Pivot BUSTE seul, carton toujours tenu (bras+jambes). release_after
-        # et depivot_before_release restent a leurs defauts (true) -- pivot()
-        # depivote et relache lui-meme en fin d'appel, pas de free_legs_for_walk
-        # (handoff identifie instable le 08/09, cf docstring).
         self._publish_step(60)
         if not self.pivot(pinch_x=pinch_x, pinch_y=PINCH_Y, pinch_z=PINCH_Z, squeeze_y=SQUEEZE_Y,
                            angle_deg=180.0, walk_stance_scale=WALK_STANCE_SCALE):

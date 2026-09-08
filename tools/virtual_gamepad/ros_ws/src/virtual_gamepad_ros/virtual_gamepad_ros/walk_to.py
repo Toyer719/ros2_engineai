@@ -40,16 +40,12 @@ from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from std_msgs.msg import Bool, Float32
 
-from virtual_gamepad_interfaces.action import WalkTo  # noqa: E402
-from virtual_gamepad_ros.field_topics import field_topic  # noqa: E402
+from virtual_gamepad_interfaces.action import WalkTo
+from virtual_gamepad_ros.field_topics import field_topic
 
-REAL_WALK_MOTION_STATE = "rl_terrain"   # cf. marche.py -- confirme atteignable depuis
-                                         # lower_body_balance le 2026-08-27
-REAL_RATE_HZ = 100.0                    # meme frequence que marche.py / l'exemple
-                                         # officiel EngineAI body_velocity_control_example.py
-REAL_ZERO_PUBLISH_CYCLES = 10           # vitesse zero explicite avant de rebasculer --
-                                         # watchdog cote /motion/body_vel_cmd non verifie,
-                                         # cf. marche.py
+REAL_WALK_MOTION_STATE = "rl_terrain"
+REAL_RATE_HZ = 100.0
+REAL_ZERO_PUBLISH_CYCLES = 10
 REAL_MOTION_STATE_TIMEOUT = 3.0
 REAL_MOTION_STATE_DETOUR = "pd_stand"
 
@@ -82,7 +78,6 @@ class WalkToActionServer(Node):
             return self._execute_real(goal_handle, forward, turn, duration)
         return self._execute_sim(goal_handle, forward, turn, duration)
 
-    # --- mode sim : emulation manette LCM ---------------------------------------
 
     def _push_sticks(self, forward: float, turn: float) -> None:
         self._left_x_pub.publish(Float32(data=float(forward)))
@@ -121,7 +116,6 @@ class WalkToActionServer(Node):
         result.success = True
         return result
 
-    # --- mode reel : /motion/body_vel_cmd ---------------------------------------
 
     def _init_real(self):
         from interface_protocol.msg import BodyVelCmd, MotionState, MotionStateRequest
@@ -219,9 +213,6 @@ class WalkToActionServer(Node):
             time.sleep(period)
             elapsed += period
 
-        # Vitesse zero explicite avant de rebasculer, meme si aucun watchdog n'est
-        # confirme cote /motion/body_vel_cmd (cf. marche.py) -- une derniere vitesse
-        # non nulle qui resterait active laisserait le robot marcher seul.
         for _ in range(REAL_ZERO_PUBLISH_CYCLES):
             msg = self._BodyVelCmd()
             msg.linear_velocity = [0.0, 0.0]
@@ -246,16 +237,10 @@ class WalkToActionServer(Node):
 
 
 def main():
-    # sys.argv direct plutot qu'argparse -- meme piege "--" que chef_node.py::main()
-    # (ros2 run virtual_gamepad_ros walk_to --ros-args -- --real).
     real = "--real" in sys.argv
 
     rclpy.init()
     node = WalkToActionServer(real=real)
-    # MultiThreadedExecutor : l'execution d'un goal (boucle bloquante ci-dessus)
-    # tourne dans son propre thread pendant qu'un autre thread reste libre pour
-    # traiter les requetes de cancel entrantes (et, en mode reel, les messages
-    # /motion/motion_state qui mettent a jour self._motion_state).
     executor = MultiThreadedExecutor()
     executor.add_node(node)
     try:
@@ -263,9 +248,6 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
-        # Un 2e Ctrl-C pendant le nettoyage (destroy_node) relance un
-        # KeyboardInterrupt en plein milieu et laisse une trace moche -- on est
-        # deja engages dans l'arret, donc on ignore les SIGINT supplementaires.
         signal.signal(signal.SIGINT, signal.SIG_IGN)
         executor.shutdown()
         node.destroy_node()

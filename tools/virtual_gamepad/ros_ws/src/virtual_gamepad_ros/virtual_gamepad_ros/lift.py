@@ -9,14 +9,14 @@ from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 
 sys.path.insert(0, "/home/equansrobotic/stagiaire_1/tools/joint_angle_commander")
-from lever import Lever  # noqa: E402
+from lever import Lever
 
 sys.path.insert(0, "/home/equansrobotic/stagiaire_1/tools/robot_arm_ik")
-from lift_carton import (  # noqa: E402
+from lift_carton import (
     LEFT_CHAIN, RIGHT_CHAIN, HAND_OFFSET_LEFT, HAND_OFFSET_RIGHT, solve_ik, ease,
 )
 
-from virtual_gamepad_interfaces.action import Lift  # noqa: E402
+from virtual_gamepad_interfaces.action import Lift
 
 LEFT_JOINT_INDICES = [13, 14, 15, 16, 17]
 RIGHT_JOINT_INDICES = [18, 19, 20, 21, 22]
@@ -24,11 +24,6 @@ RIGHT_JOINT_INDICES = [18, 19, 20, 21, 22]
 Q_LEFT_HOME = np.array([0.000879, 0.075284, -0.000233, -0.126397, -0.000033])
 Q_RIGHT_HOME = np.array([0.000885, -0.075161, 0.000241, -0.126390, 0.000033])
 
-# Posture jambes flechies (portee de lift_carton_real.py, non repris ici avant
-# le 20/08) : indices + angles "walk au repos" mesures via sim_state le
-# 2026-08-11 (voir lift_carton_real.py pour le detail complet). Coordonner
-# les 3 (hanche+genou+cheville) est essentiel -- le genou SEUL, mauvais
-# signe, a fait tomber le robot immediatement lors d'un essai anterieur.
 LEFT_HIP_PITCH_INDEX = 0
 RIGHT_HIP_PITCH_INDEX = 6
 LEFT_KNEE_PITCH_INDEX = 3
@@ -42,16 +37,6 @@ WALK_STANCE_KNEE_R = np.radians(10.5)
 WALK_STANCE_ANKLE_PITCH_L = np.radians(-4.8)
 WALK_STANCE_ANKLE_PITCH_R = np.radians(-5.2)
 
-# 2026-09-02 : bug trouve par analogie avec LEVEE_STIFFNESS de levee.py (script
-# robot reel) -- ce node n'a JAMAIS reduit la rigidite des bras pendant la
-# levee, contrairement aux jambes (_bend_knees ci-dessous). Les bras restent
-# donc a lever.py::DEFAULT_STIFFNESS=250 (indices 13-22) meme pendant la
-# SEULE phase a charge reelle soutenue (levee/maintien) -- meme categorie de
-# probleme que celui trouve et corrige sur le robot reel le 31/08 (25.0 au
-# lieu du 90.0 documente). Meme protocole JointOverrideCommand natif des 2
-# cotes (pas juste une analogie de nom), donc meme valeur reutilisee comme
-# point de depart. A ajuster si le robot reste instable/trop mou pendant la
-# levee malgre ce fix -- jamais teste avant cette session.
 LEVEE_ARM_STIFFNESS = 90.0
 
 
@@ -188,19 +173,8 @@ class LiftActionServer(Node):
             result.success = False
             return result
 
-        # only_phase (2026-09-02, meme principe que --only-phase sur levee.py) :
-        # meme protection contre "il desserre avant la levee" (cf. Lift.action) --
-        # relachement seulement si only_phase in ("", "levee").
         run_approche = g.only_phase in ("", "approche")
         run_serrage = g.only_phase in ("", "serrage")
-        # forget() SEULEMENT si cet appel inclut l'approche (2026-09-02) : c'est
-        # toujours le tout DEBUT d'une nouvelle sequence de saisie -- nettoie
-        # l'etat _touched/_stiffness residuel d'un appel precedent SANS RAPPORT
-        # (root cause de "il ne leve pas les bras"/"ne flechit pas les genoux",
-        # cf. memoire projet -- ce node vit longtemps, plusieurs sequences
-        # independantes s'enchainent dessus). Ne PAS le faire pour
-        # serrage/levee seuls : ces appels DEPENDENT expres de l'etat laisse
-        # par l'appel approche precedent DANS LA MEME sequence.
         if run_approche:
             lever.forget()
         run_levee = g.only_phase in ("", "levee")
@@ -254,10 +228,6 @@ class LiftActionServer(Node):
             return result
 
         if g.only_phase == "levee":
-            # Suppose approche+serrage DEJA effectues par un appel precedent (meme
-            # convention que levee.py --only-phase levee, robot reel) -- publie
-            # directement la position de serrage (recalculee via solve_ik ci-dessus,
-            # pas un etat persistant) au lieu de la rejouer.
             self.get_logger().info(
                 f"only_phase=levee : publication directe de la position de serrage "
                 f"(pinch_x={g.pinch_x:.3f} pinch_y=+-{g.squeeze_y:.3f} pinch_z={g.pinch_z:.3f}), "
@@ -299,10 +269,6 @@ class LiftActionServer(Node):
             return result
 
         if g.release_after:
-            # DESCENTE AJOUTEE ICI (2026-09-02, demande utilisateur "et le
-            # reposer") : symetrique inverse de la montee ci-dessus (Z lift_z
-            # -> pinch_z), pour reposer le carton a sa hauteur de prise
-            # d'origine (podium) plutot que de le relacher/tirer en l'air.
             self.get_logger().info(
                 f"pose -- Z {g.lift_z:.3f} -> {g.pinch_z:.3f} ({g.lift_duration:.1f}s)"
             )
@@ -319,38 +285,9 @@ class LiftActionServer(Node):
                 for idx, angle in zip(RIGHT_JOINT_INDICES, qR):
                     lever[idx] = float(angle)
                 time.sleep(1.0 / 30)
-            # rigidite bras restauree a 250 (defaut) une fois repose -- plus de
-            # charge soutenue a partir d'ici (LEVEE_ARM_STIFFNESS=90 n'etait
-            # necessaire QUE pendant la levee/maintien, cf. plus haut).
             for idx in LEFT_JOINT_INDICES + RIGHT_JOINT_INDICES:
                 lever.set_gains(idx, stiffness=250.0)
 
-            # RETRAIT (2026-09-02) : root cause de "il pete un cable et ejecte le
-            # carton" (retour utilisateur direct, confirme par trace instrumentee
-            # -- vitesse/couple bras QUASI NULS pendant toute l'approche/serrage/
-            # levee/maintien, puis pic brutal (12.5 rad/s, 20.9 N.m, choc visible
-            # sur base_link z 0.82->0.79) EXACTEMENT au moment ou _release()
-            # rendait la main -- confirme aussi en isolant SEULEMENT la levee via
-            # only_phase=levee, meme chute). _release() rampe le POIDS de
-            # l'override (1.0->0.0) mais republie la MEME position tenue (bras
-            # loin de leur pose native, jambes flechies) jusqu'a la toute fin --
-            # au moment ou le poids atteint reellement 0, le controleur natif
-            # (pd_stand) reprend d'un coup avec sa PROPRE cible (bras/jambes
-            # ~Q_HOME/droites), tres loin de la position tenue -- saut de
-            # position brutal, pas un blend progressif malgre la rampe de poids.
-            # Fix : ramener bras (interpolation articulaire directe vers Q_HOME,
-            # ouvre le serrage au passage) ET jambes (_straighten_knees, inverse
-            # de _bend_knees) PRES de leur cible native AVANT de rendre le
-            # controle -- une fois la-bas, meme un release() a poids nul ne
-            # produit plus de saut.
-            # NOTE 2026-09-02 (2e passage) : le redressement des jambes est
-            # desormais INCONDITIONNEL des que release_after=True (plus gate par
-            # g.walk_stance) -- un appel only_phase="levee" enchaine peut avoir
-            # walk_stance=False (jambes DEJA flechies par un appel precedent,
-            # pas besoin de re-flechir en DEBUT de CET appel) tout en ayant
-            # quand meme besoin de redresser en FIN d'appel avant de relacher --
-            # les 2 evenements (bend au debut, straighten a la fin) ne doivent
-            # plus partager le meme flag.
             self.get_logger().info(
                 f"retrait bras -- retour vers la posture de repos ({g.approach_duration:.1f}s), "
                 "avant relachement (evite le saut de position a la reprise de controle native)"
@@ -377,9 +314,6 @@ class LiftActionServer(Node):
 def main():
     rclpy.init()
     node = LiftActionServer()
-    # MultiThreadedExecutor : meme raison que walk_to.py/stand.py -- l'execution
-    # d'un goal (boucle bloquante ci-dessus) tourne dans son propre thread
-    # pendant qu'un autre thread reste libre pour traiter les cancel entrants.
     executor = MultiThreadedExecutor()
     executor.add_node(node)
     try:

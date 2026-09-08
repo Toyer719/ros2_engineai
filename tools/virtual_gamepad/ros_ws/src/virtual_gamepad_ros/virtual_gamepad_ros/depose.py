@@ -9,18 +9,15 @@ from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 
 sys.path.insert(0, "/home/equansrobotic/stagiaire_1/tools/joint_angle_commander")
-from lever import Lever  # noqa: E402
+from lever import Lever
 
 sys.path.insert(0, "/home/equansrobotic/stagiaire_1/tools/robot_arm_ik")
-from lift_carton import (  # noqa: E402
+from lift_carton import (
     LEFT_CHAIN, RIGHT_CHAIN, HAND_OFFSET_LEFT, HAND_OFFSET_RIGHT, solve_ik, ease,
 )
 
-from virtual_gamepad_interfaces.action import Depose  # noqa: E402
+from virtual_gamepad_interfaces.action import Depose
 
-# Memes indices/constantes que lift.py/pivot.py -- voir leur en-tete pour le
-# detail (JointOverrideCommand = remplacement complet, republier bras+jambes
-# ensemble a chaque tick).
 LEFT_JOINT_INDICES = [13, 14, 15, 16, 17]
 RIGHT_JOINT_INDICES = [18, 19, 20, 21, 22]
 
@@ -142,13 +139,6 @@ class DeposeActionServer(Node):
             self._bend_knees(lever, g.walk_stance_scale, g.walk_stance_stiffness_scale,
                               g.walk_stance_duration)
 
-        # REJOUE le meme chemin que lift.py/pivot.py (Q_HOME -> pinch a
-        # g.pinch_z -> serrage a g.pinch_z -> montee jusqu'a g.hold_z) au
-        # lieu d'un solve_ik direct depuis Q_HOME vers la position tenue --
-        # meme fix que pivot.py (24/08, "il le lache pour pivoter") : un
-        # solve direct peut converger vers une solution articulaire
-        # differente de celle reellement tenue, meme pour une cible
-        # cartesienne identique (solveur iteratif/local sur bras redondant).
         pinch_L = _rotate_xy([g.pinch_x, g.pinch_y, g.pinch_z], g.pinch_yaw_offset)
         pinch_R = _rotate_xy([g.pinch_x, -g.pinch_y, g.pinch_z], g.pinch_yaw_offset)
         q_squeeze_L = solve_ik(LEFT_CHAIN, HAND_OFFSET_LEFT, pinch_L, Q_LEFT_HOME)
@@ -167,9 +157,6 @@ class DeposeActionServer(Node):
             q_squeeze_R = solve_ik(RIGHT_CHAIN, HAND_OFFSET_RIGHT,
                                     _rotate_xy([g.pinch_x, -g.squeeze_y, z], g.pinch_yaw_offset),
                                     q_squeeze_R, iters=30)
-        # Republie immediatement cette pose (avant tout mouvement) pour ne
-        # pas laisser un trou entre la derniere pose tenue par pivot.py et
-        # la premiere de ce node.
         for idx, angle in zip(LEFT_JOINT_INDICES, q_squeeze_L):
             lever[idx] = float(angle)
         for idx, angle in zip(RIGHT_JOINT_INDICES, q_squeeze_R):
