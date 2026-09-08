@@ -1,0 +1,148 @@
+Architecture de la sequence : fichiers, processus, communication
+==================================================================
+
+TOUT tourne sur UNE seule machine, dans UN seul conteneur Docker
+(engineai_robotics_env). Il n'y a pas plusieurs "ordinateurs" impliques dans
+cette simulation -- juste plusieurs PROCESSUS distincts a l'interieur du
+meme conteneur, qui se parlent par reseau local (LCM) et par ROS2 (DDS).
+
+Il y a 4 familles de processus :
+
+
+1) LA PHYSIQUE -- run_mujoco.sh
+------------------------------------------------------------------
+Fichier lance : engineai_robotics_native_sdk/scripts/run_mujoco.sh
+Binaire reel  : engineai_robotics_simulation_mujoco pm01_edu_carton
+
+Role : simule la physique (MuJoCo) -- corps du robot, contacts, gravite,
+carton, podium. Ne "reflechit" a rien, applique juste les couples/positions
+recus et renvoie l'etat reel (positions/vitesses/orientation).
+
+
+2) LE CERVEAU / CONTROLEUR -- run.sh
+------------------------------------------------------------------
+Fichier lance : engineai_robotics_native_sdk/run.sh
+Binaire reel  : src_executor pm01_edu_carton
+
+Role : c'est le controleur bas niveau (marche, equilibre, pd_stand, etc).
+Il tourne EN PARALLELE du processus physique (1) et communique avec lui en
+LCM (recoit l'etat sim, renvoie les commandes moteur).
+
+C'est AUSSI ce processus qui heberge le pont ROS2 <-> controleur :
+  engineai_robotics_native_sdk/src/ros2_node/src/joint_override_node.cc
+  -> s'abonne au topic ROS2 /motion/joint_override_command
+  -> ecrit directement dans data_store_ (memoire partagee interne au
+     controleur, PAS du LCM ici)
+  -> IMPORTANT : chaque message recu REMPLACE entierement la commande
+     precedente (pas de fusion) -- c'est pour ca que pivot.py et lift.py
+     republient TOUJOURS bras+jambes+buste ensemble a chaque tick, sinon
+     les articulations non repetees repartent en controle natif.
+
+
+3) LES NOEUDS ROS2 DU COMPORTEMENT -- package virtual_gamepad_ros
+   (dossier ros_nodes/ de ce dossier d'export)
+------------------------------------------------------------------
+Lances ensemble par : launch/virtual_gamepad.launch.py
+
+  chef_node.py   -- L'ORCHESTRATEUR. Ne controle rien lui-meme : il
+                    appelle les autres noeuds (ci-dessous) comme des
+                    Actions ROS2, dans l'ordre stand -> walk_to -> lift
+                    (pivot() existe mais n'est plus appele, cf ce fichier).
+                    Aggrege aussi les topics /virtual_gamepad/cmd/* (voir
+                    field_topics.py) et les republie en LCM GamepadKeys
+                    pour piloter le controleur (2) comme une vraie
+                    manette physique.
+
+  stand.py       -- Action "Stand" : publie LB+A (boutons manette
+                    virtuels) pour faire passer le controleur (2) en
+                    pd_stand (position debout stable).
+
+  walk_to.py     -- Action "WalkTo" : publie LB+B + sticks gauche/droit
+                    (avance/tourne) pendant une duree donnee -- simule
+                    une pression de manette pour faire marcher le robot.
+
+  lift.py        -- Action "Lift" : calcule les angles bras (IK, via
+                    solve_ik/forward_kinematics) et les envoie via
+                    JointOverrideCommand sur /motion/joint_override_command
+                    (donc PAS via la manette virtuelle -- chemin direct
+                    vers le controleur (2), cf point 2 ci-dessus). Flechit
+                    aussi les genoux/hanches/chevilles avant de lever les
+                    bras (walk_stance) pour garder l'equilibre.
+
+  pivot.py       -- Action "Pivot" : meme mecanisme que lift.py mais pour
+                    faire tourner le BUSTE (waist yaw) une fois le carton
+                    en main. Existe et fonctionne mais n'est plus appelee
+                    par chef_node.py (desactivee sur demande).
+
+  field_topics.py -- Pas un noeud : juste une table de correspondance
+                    partagee (nom de bouton/stick <-> topic ROS2), utilisee
+                    par walk_to.py/stand.py pour publier et par chef_node.py
+                    pour les relire et les agreger en LCM.
+
+Communication chef_node <-> stand/walk_to/lift/pivot : Actions ROS2
+(demande + suivi de progres + resultat final), PAS du LCM.
+
+
+4) LA VISION -- dossier vision/ de ce dossier d'export
+   (PAS des noeuds ROS2 -- scripts Python autonomes, lances a la main)
+------------------------------------------------------------------
+  pelvis_camera_sim.py     -- "camera fantome" : n'existe pas vraiment
+                              dans le robot/la sim. Ecoute sim_state en
+                              LCM (position/orientation reelle du robot),
+                              rejoue cette pose dans une scene MuJoCo
+                              dupliquee hors-ligne (shadow_scene.py) pour
+                              en extraire une image comme si une camera
+                              etait montee sur le bassin. Publie l'image
+                              en ROS2 sur /camera/pelvis_sim/image_raw.
+
+  carton_pose_publisher.py -- s'abonne a /camera/pelvis_sim/image_raw
+                              (ROS2), detecte le marqueur ArUco colle sur
+                              le carton, calcule sa position relative au
+                              robot (cv2.solvePnP) et publie le resultat
+                              en ROS2 sur /vision/carton_pose_base.
+
+  shadow_scene.py           -- pas un processus : bibliotheque partagee
+                              qui construit le fichier XML MuJoCo temporaire
+                              (scene reelle + camera(s) ajoutee(s)), utilisee
+                              par pelvis_camera_sim.py ET record_external_view.py.
+
+  record_external_view.py  -- outil d'enregistrement video (camera
+                              exterieure fixe), PAS utilise pendant la
+                              sequence -- seulement pour capturer les
+                              videos de demonstration.
+
+chef_node.py lit /vision/carton_pose_base (ROS2, comme un abonne normal)
+pour savoir ou marcher/s'arreter avant de lever le carton.
+
+
+RESUME DES CANAUX DE COMMUNICATION
+------------------------------------------------------------------
+LCM (reseau UDP multicast udpm://239.255.76.67:7667, PAS du ROS2/DDS) :
+  - sim_state        : (2) MuJoCo -> tout le monde (etat reel du robot,
+                        lu par run.sh/src_executor ET par pelvis_camera_sim.py)
+  - gamepad_keys      : chef_node.py -> (2) src_executor (commandes
+                        "manette virtuelle" agregees depuis les topics ROS2
+                        /virtual_gamepad/cmd/*)
+
+ROS2 / DDS (topics, domaine ROS_DOMAIN_ID=69, rmw_cyclonedds_cpp) :
+  - /virtual_gamepad/cmd/*        : walk_to.py, stand.py -> chef_node.py
+  - /camera/pelvis_sim/image_raw  : pelvis_camera_sim.py -> carton_pose_publisher.py
+  - /vision/carton_pose_base      : carton_pose_publisher.py -> chef_node.py
+  - /motion/joint_override_command : lift.py, pivot.py -> joint_override_node.cc
+                                      (a l'interieur du processus (2) src_executor)
+
+ROS2 / DDS (Actions, meme domaine) :
+  - Stand, WalkTo, Lift, Pivot : chef_node.py (client) <-> stand.py/walk_to.py/
+                                  lift.py/pivot.py (serveurs), une Action par
+                                  noeud de comportement.
+
+
+ORDRE DE DEMARRAGE REEL (celui utilise pour les tests) :
+  1. run_mujoco.sh pm01_edu_carton   (physique)
+  2. run.sh                          (controleur + pont ROS2 joint_override)
+  3. ros2 launch virtual_gamepad.launch.py
+       -> demarre stand, walk_to, lift, pivot, chef en meme temps
+  4. python3 pelvis_camera_sim.py & python3 carton_pose_publisher.py
+       (vision, lances separement, pas dans le launch file)
+  5. chef_node.py execute automatiquement stand -> walk_to -> lift des
+     que la vision publie une detection valide.

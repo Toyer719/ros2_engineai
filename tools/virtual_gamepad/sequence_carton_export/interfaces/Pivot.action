@@ -1,0 +1,45 @@
+# Goal : pivote le BUSTE (J12_WAIST_YAW) de angle_deg pendant que le carton
+# reste tenu (bras+jambes), puis depivote et relache -- suppose que lift.py
+# a ete appele juste avant avec release_after=false (le carton est en l'air,
+# NON relache). Positif = vers la gauche du robot (meme convention que
+# lift_carton_real.py --pivot-degrees).
+#
+# NE PIVOTE QUE LE BUSTE, PAS LE BASSIN/HANCHES (J02/J08_HIP_YAW) --
+# decision volontaire, confirmee avec l'utilisateur le 20/08. Teste en
+# MuJoCo dans lift_carton_real.py (2026-08-11, telemetrie sim_state
+# complete) : buste seul (hip_pivot_fraction=0) stable de bout en bout
+# (approche->...->pivot->depivot->release, z=0.818-0.821m tout du long,
+# jusqu'a 60deg) -- MAIS meme une fraction modeste de rotation des hanches
+# (0.3, ~18deg pour 60deg de buste) fait s'ecrouler le robot quelques
+# dixiemes de seconde apres le DEBUT du relachement, reproductible 2x,
+# independant des gains bras. Les hanches sont porteuses (contrairement au
+# buste) -- meme une torsion modeste y laisse un etat qui devient instable
+# au moment ou le poids du carton est lache. Ne PAS ajouter de rotation de
+# hanches a ce node sans re-valider par telemetrie complete (hauteur/roll/
+# pitch/linv/angv) bien APRES le relachement, pas seulement pendant le
+# maintien.
+#
+# IMPORTANT (voir Lift.action) : /motion/joint_override_command est un
+# REMPLACEMENT COMPLET a chaque message, pas une fusion -- ce node doit
+# republier EN CONTINU les memes angles bras (recalcules depuis pinch_x/y/z
+# via solve_ik, comme lift.py) et jambes (memes constantes walk_stance) que
+# lift.py a etabli, en plus du buste, sous peine de faire lacher le carton
+# d'un coup au premier message.
+float32 pinch_x 0.38
+float32 pinch_y 0.28
+float32 pinch_z -0.054
+float32 pinch_yaw_offset 0.0
+float32 squeeze_y 0.086
+float32 lift_z 0.146
+float32 walk_stance_scale 1.5
+float32 walk_stance_stiffness_scale 1.8
+float32 angle_deg 90.0
+float32 pivot_duration 2.0
+float32 hold_seconds 3.0
+bool depivot_before_release true
+float32 release_ramp_seconds 1.5
+---
+# Result
+bool success
+---
+# Feedback

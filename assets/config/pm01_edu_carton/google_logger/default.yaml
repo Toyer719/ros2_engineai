@@ -1,0 +1,16 @@
+glog_level: 0
+
+glog_destination: 2
+
+glog_dir: /tmp/logs
+
+glog_forward: true
+
+glog_vmodule:
+  task_param: 1
+  imu_runner: 0
+  motor_runner: 0
+  motor_monitor: 0
+  passive_runner: 1
+  remote_handle_planner: 0
+  remote_handle_node: 0

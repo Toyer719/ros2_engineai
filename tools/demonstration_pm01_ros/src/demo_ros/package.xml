@@ -1,0 +1,16 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>demo_ros</name>
+  <version>0.0.1</version>
+  <description>Node lift_demo -- version simplifiee de test1 pour demonstration_pm01.</description>
+  <maintainer email="jules.lenezet@gmail.com">equansrobotic</maintainer>
+  <license>TODO: License declaration</license>
+
+  <depend>rclpy</depend>
+  <depend>demo_interfaces</depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

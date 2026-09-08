@@ -1,0 +1,69 @@
+# Goal : leve un carton par pince, boucle OUVERTE de position articulaire
+# (Lever/JointOverrideCommand sur /motion/joint_override_command), meme
+# geometrie IK que tools/robot_arm_ik/lift_carton.py (LEFT_CHAIN/RIGHT_CHAIN/
+# solve_ik/ease, reutilises tels quels) et meme sequence que
+# tools/joint_angle_commander/lift_carton_real.py : posture jambes flechies
+# -> approche -> serrage -> levee -> maintien -> relachement (rampe de
+# poids). PAS de pivot buste ici (voir une future Action Pivot separee --
+# seule la variante buste seul, hip_pivot_fraction=0, est prouvee stable,
+# cf memoire projet).
+# Suppose le robot deja en pd_stand, immobile, positionne devant le carton
+# (voir walk_to en amont dans la choregraphie de chef_node).
+# Valeurs par defaut = celles calibrees pour le carton actuel (275x191x292mm,
+# voir lift_carton_real.py).
+# release_after=false (20/08, pour Pivot.action) : saute le relachement en
+# fin de sequence -- le robot reste bras+jambes tenus (carton en l'air)
+# jusqu'a ce qu'un AUTRE node (pivot) reprenne la main. IMPORTANT :
+# /motion/joint_override_command est un REMPLACEMENT COMPLET a chaque
+# message (verifie dans joint_override_node.cc : `data_store_->
+# joint_override_command.Set(command)`), PAS une fusion -- si un 2e node
+# publie sur ce topic sans republier LUI-MEME les indices bras/jambes deja
+# tenus, ils sont perdus au premier message du 2e node (le carton tomberait
+# d'un coup). Pivot.action DOIT donc recalculer et republier en continu les
+# memes angles bras (pinch_x/y/z) et jambes (memes constantes walk_stance)
+# que ce Lift a utilise, pas juste le buste seul.
+# only_phase (2026-09-02, meme principe que --only-phase sur levee.py, robot
+# reel) : "" execute tout (defaut, comportement inchange). "approche" ou
+# "serrage" execute CETTE phase seule puis s'arrete (pas de levee/relachement
+# -- les bras restent tenus a leur derniere position, meme protection que
+# lift.py::_execute() qui ne relache QUE si only_phase in ("", "levee"), evite
+# le bug "il desserre avant la levee" deja rencontre cote reel). "levee"
+# publie directement la position de serrage (suppose deja atteinte -- meme
+# convention que levee.py qui recalcule q_squeeze via solve_ik plutot que de
+# dependre d'un etat persistant entre appels) puis n'execute QUE la montee/
+# maintien/relachement.
+string only_phase ""
+bool release_after true
+float32 pinch_x 0.38
+float32 pinch_y 0.28
+float32 pinch_z -0.054
+float32 pinch_yaw_offset 0.0
+float32 squeeze_y 0.086
+float32 lift_z 0.146
+float32 approach_duration 2.0
+float32 squeeze_duration 1.5
+float32 lift_duration 3.0
+float32 hold_seconds 3.0
+float32 release_ramp_seconds 1.5
+# Posture jambes flechies (hanche+genou+cheville COORDONNES, PAS le genou
+# seul -- un essai a genou seul, mauvais signe, a fait tomber le robot
+# immediatement, voir lift_carton_real.py) avant de lever les bras :
+# pd_stand tient les jambes completement DROITES par defaut
+# (desired_joint_position=0, assets/config/.../pd_stand/robot.yaml), peu de
+# marge d'absorption pour les perturbations des bras charges. Angles cibles
+# = posture "walk au repos" mesuree (WALK_STANCE_* dans lift_carton_real.py)
+# multipliee par walk_stance_scale. Defaut baisse a 1.5 (etait 3.0, meme
+# defaut que lift_carton_real.py) le 20/08 : constate en sim que 3.0
+# (~35deg de genou, 3x la posture MESUREE et confirmee equilibree a 1x)
+# faisait basculer le robot vers l'AVANT apres la flexion -- l'extrapolation
+# a 3x n'etait pas verifiee dans CETTE sim (config/masse potentiellement
+# differente du robot reel cible par lift_carton_real.py).
+bool walk_stance true
+float32 walk_stance_scale 1.5
+float32 walk_stance_stiffness_scale 1.8
+float32 walk_stance_duration 3.0
+---
+# Result
+bool success
+---
+# Feedback

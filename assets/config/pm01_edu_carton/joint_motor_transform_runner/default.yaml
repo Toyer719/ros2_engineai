@@ -1,0 +1,13 @@
+
+enable_parallel_converter: true
+
+enable_serial_converter: false
+
+enable_joint_override_converter: true
+
+joint_override_converter_param:
+  position_clamp: [-6.28318, 6.28318]
+  velocity_clamp: [-10.0, 10.0]
+  feed_forward_torque_clamp: [0.0, 30.0]
+  stiffness_clamp: [0.0, 1000.0]
+  damping_clamp: [1, 10]

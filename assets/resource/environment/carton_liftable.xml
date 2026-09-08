@@ -1,0 +1,11 @@
+<mujoco model="carton_liftable">
+
+  <worldbody>
+    <body name="carton" pos="1.8 0 0.796">
+      <freejoint/>
+      <geom name="carton_box" type="box" size="0.1375 0.0955 0.146" mass="0.220"
+            rgba="0.65 0.48 0.32 1" friction="1.0 0.005 0.0001" group="0"/>
+    </body>
+  </worldbody>
+
+</mujoco>

@@ -1,0 +1,29 @@
+<mujoco model="global_model">
+    <include file="/home/equansrobotic/engineai_robotics_native_sdk/assets/resource/robot/pm01_edu/xml/serial_pm01_edu_carton_liftable.xml"/>
+    <include file="/home/equansrobotic/engineai_robotics_native_sdk/assets/resource/environment/ground.xml"/>
+
+    <!-- 2026-08-26 (test2) : podium (bloc unique 91x53.5x71cm reel) + carton eloigne,
+         necessitant une vraie marche pour l'atteindre (chef/walk_to, vision ArUco) --
+         voir tools/robot_arm_ik_podium_test2/ pour le detail du calcul (ecart valide
+         du test1 + 0.96m/4 pas).
+         2026-09-02 : distance robot->carton alignee sur la mesure reelle (bassin PM01
+         a 1.75m du carton -- 35cm robot-mur + 210cm mur-carton, cf. sourcer_ssh_nezha.txt
+         section 5). Spawn du robot mesure a x=~0.02 (sim_state, tres reproductible) ->
+         carton_x = 0.02+1.75 = 1.77 (etait 1.3274, distance simu ~1.31m avant ce
+         changement). Podium deplace du MEME offset (etait +0.3175 devant le carton,
+         conserve : 1.77+0.3175=2.0875) pour garder la geometrie carton/podium
+         identique, juste translatee. ATTENTION : WALK_DURATION dans
+         chef_node.py::run_sequence_blind() calibree pour l'ANCIENNE distance --
+         a recalibrer (le robot n'ira plus assez loin en l'etat). -->
+    <worldbody>
+        <body name="podium" pos="2.0875 0.0 0.2675">
+            <geom name="podium_block" type="box" size="0.455 0.355 0.2675" mass="20"
+                  rgba="0.55 0.55 0.58 1" friction="1.0 0.005 0.0001" group="0"/>
+        </body>
+        <body name="carton" pos="1.77 0.0 0.681">
+            <freejoint/>
+            <geom name="carton_box" type="box" size="0.1375 0.0955 0.146" mass="0.220"
+                  rgba="0.65 0.48 0.32 1" friction="1.0 0.005 0.0001" group="0"/>
+        </body>
+    </worldbody>
+</mujoco>

@@ -1,0 +1,241 @@
+COMMENT EXECUTER LES SCRIPTS SUR LE VRAI ROBOT PM01 (Nezha)
+=============================================================
+Ecrit le 2026-08-24. Complete a la main si de nouvelles etapes/scripts
+apparaissent -- ce fichier n'est pas regenere automatiquement.
+
+0. AVANT TOUT : VERIFIER LA BATTERIE
+-------------------------------------
+Un test recent (24/08) a produit des mouvements violents + coupures reseau
+qui ressemblaient a un bug logiciel, mais la cause reelle etait la batterie
+a 0%. Toujours verifier AVANT de lancer quoi que ce soit :
+
+    source /opt/ros/humble/setup.bash
+    source /home/user/source/engineai_workspace/install/setup.bash
+    export ROS_DOMAIN_ID=69
+    export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+    export ROS_LOCALHOST_ONLY=0
+    ros2 topic echo /hardware/power_info --once
+
+Regarder "percentage" -- si c'est bas, recharger avant de continuer.
+
+
+1. ACCES SSH AUX 2 ORDINATEURS DU ROBOT
+------------------------------------------
+Le PM01 a 2 ordinateurs embarques, sur le meme reseau que ce PC de dev :
+
+  Nezha  (controle bas niveau / temps reel, moteurs) :
+      ssh user@192.168.0.163      mot de passe : 1
+
+  Jetson (vision / UI / monitoring, dashboard web port 9002) :
+      ssh ubuntu@192.168.0.162    mot de passe : ubuntu
+
+Pour les scripts d'articulation (bras, carton), c'est TOUJOURS Nezha.
+
+
+2. ENVIRONNEMENT A SOURCER SUR NEZHA (avant tout script ROS2)
+-----------------------------------------------------------------
+Une fois connecte en SSH sur Nezha :
+
+    source /opt/ros/humble/setup.bash
+    source /home/user/source/engineai_workspace/install/setup.bash
+    export ROS_DOMAIN_ID=69
+    export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+    export ROS_LOCALHOST_ONLY=0
+
+Attention : ce sont les chemins de NEZHA, pas ceux du PC de dev (qui a
+d'autres chemins pour la simulation MuJoCo -- ne pas melanger les deux).
+
+
+3. ETAT DE MOUVEMENT REQUIS : lower_body_balance
+-----------------------------------------------------
+/motion/joint_override_command (utilise par tous ces scripts, via lever.py)
+n'a d'effet QUE sur les bras, et QUE si le robot est en mode
+"lower_body_balance". En pd_stand la commande est acceptee mais RIEN ne
+bouge. levee.py bascule lui-meme dans ce mode au demarrage (donc
+rien a faire a la main pour celui-la). Pour un script qui ne le fait pas
+(move_arms_demo.py, test_leg_override.py), basculer a la main d'abord :
+
+    python3 /home/user/source/engineai_workspace/src/interface_example/scripts/switch_to_target_motion_example.py --target-motion lower_body_balance
+
+Si le robot part de joint_bridge, il n'y a pas de transition directe vers
+lower_body_balance -- repasser d'abord par pd_stand (le script ci-dessus
+gere ca automatiquement pour levee.py, --detour pd_stand).
+
+Pour tout arreter d'urgence : bouton "passive" de la telecommande (LB+RB).
+Coupe tout mais rend le robot MOU (il s'affaisse) -- dernier recours, pas
+un arret propre.
+
+Pour la MARCHE (marche.py, cf section 5b) : le script bascule
+lui-meme lower_body_balance -> rl_terrain avant de publier une vitesse, PUIS
+rebascule en lower_body_balance a la fin -- rien a faire a la main non plus.
+INCONNUE NON VERIFIEE au 2026-08-28 : la transition directe rl_terrain ->
+lower_body_balance existe-t-elle, ou faut-il un detour ? Le premier essai
+reel (motion-state-switch-only, --forward 0.0) sert justement a repondre a
+cette question -- si ca echoue, verifier `ros2 topic echo /motion/motion_state
+--once` en rl_terrain pour voir available_transition_motions et ajuster
+--walk-motion-state ou le detour dans motion_state.py.
+
+
+4. OU SONT LES FICHIERS
+----------------------------
+Sur CE PC (dev), source de verite -- modifier ICI puis recopier sur Nezha :
+
+    /home/equansrobotic/stagiaire_1/tools/joint_angle_commander/
+        lever.py                 (classe Lever, wrapper JointOverrideCommand)
+        motion_state.py          (helper partage : ensure_motion_state(), factorise de levee.py le 2026-08-28)
+        move_arms_demo.py        (demo minimale, leve les 2 epaules)
+        test_leg_override.py     (test : override jambe en lower_body_balance -- confirme SANS effet, garde pour reference)
+        levee.py      (script principal levee : approche + serrage + levee + pivot optionnel du carton reel)
+        marche.py    (marche reelle via /motion/body_vel_cmd -- REMPLACE walk_real.py, confirme mort sur robot reel, cf son bandeau d'avertissement)
+        orchestrateur.py    (enchaine marche.py + levee.py sur un seul node/contexte rclpy partage)
+        walk_real.py             (MORT sur robot reel -- garde pour reference seulement, NE PLUS UTILISER, cf bandeau d'avertissement en tete du fichier)
+
+    /home/equansrobotic/stagiaire_1/tools/robot_arm_ik/
+        lift_carton.py            (geometrie IK partagee sim/reel : LEFT_CHAIN/RIGHT_CHAIN, solve_ik, forward_kinematics)
+
+Sur NEZHA (copie d'execution -- a resynchroniser via scp apres toute
+modification faite sur le PC de dev) :
+
+    /home/user/projects/arm_test/
+        lever.py
+        motion_state.py
+        move_arms_demo.py
+        test_leg_override.py
+        levee.py
+        marche.py
+        orchestrateur.py
+        walk_real.py              (present pour l'historique, NE PLUS UTILISER)
+
+    /home/user/projects/robot_arm_ik/
+        lift_carton.py
+
+(robot_arm_ik/ est un dossier FRERE de arm_test/, pas un sous-dossier --
+levee.py fait sys.path.insert(..., "..", "robot_arm_ik") en
+partant de son propre dossier, donc l'arborescence relative doit matcher.)
+
+Pour resynchroniser un fichier modifie sur le PC de dev vers Nezha (adapter
+le nom de fichier) :
+
+    sshpass -p '1' scp /home/equansrobotic/stagiaire_1/tools/joint_angle_commander/levee.py user@192.168.0.163:/home/user/projects/arm_test/levee.py
+    sshpass -p '1' scp /home/equansrobotic/stagiaire_1/tools/joint_angle_commander/motion_state.py user@192.168.0.163:/home/user/projects/arm_test/motion_state.py
+    sshpass -p '1' scp /home/equansrobotic/stagiaire_1/tools/joint_angle_commander/marche.py user@192.168.0.163:/home/user/projects/arm_test/marche.py
+    sshpass -p '1' scp /home/equansrobotic/stagiaire_1/tools/joint_angle_commander/orchestrateur.py user@192.168.0.163:/home/user/projects/arm_test/orchestrateur.py
+
+
+5. LANCER LES SCRIPTS (depuis Nezha, apres l'etape 2)
+-----------------------------------------------------------
+Demo bras minimale (necessite lower_body_balance deja actif, etape 3) :
+
+    cd /home/user/projects/arm_test
+    python3 move_arms_demo.py
+
+Script principal, TOUJOURS commencer par --dry-run (rien n'est envoye,
+juste les angles affiches) :
+
+    cd /home/user/projects/arm_test
+    python3 levee.py --dry-run
+
+Puis phase par phase, en observant a chaque fois (--only-phase) :
+
+    python3 levee.py --only-phase approche
+    python3 levee.py --only-phase approche --only-phase serrage   # (ou juste enchainer sans --only-phase)
+    python3 levee.py                                              # sequence complete
+
+Reglages par defaut (24/08) : mouvements LENTS par consigne permanente
+(approche 4s, serrage 4s, levee 5s, rampe de relachement 4s), squeeze_y
+remonte a 0.094 (contact leger au lieu d'1cm de compression forcee -- cause
+probable des ERR_MOTOR_FAULT rencontres). Ne pas revenir a des valeurs plus
+rapides/agressives sans consigne explicite contraire.
+
+--pinch-z est calibre pour une table de 72cm (voir --help pour la valeur
+exacte et la formule de recalcul si la hauteur de table change).
+
+
+5b. MARCHE (marche.py) ET SEQUENCE COMBINEE (orchestrateur.py)
+---------------------------------------------------------------------------------
+walk_real.py (ancien canal LCM/manette virtuelle) est CONFIRME MORT sur le
+robot reel (2026-08-27/28, cf son bandeau d'avertissement) -- NE PLUS
+UTILISER. marche.py le remplace : publie /motion/body_vel_cmd
+(vraies unites m/s / rad/s, PAS l'echelle -1..1 de l'ancien stick manette).
+
+Premiers essais reels le 2026-08-28 -- resultats ci-dessous, a lire avant de
+retester :
+
+    cd /home/user/projects/arm_test
+
+    # 1) dry-run, rien n'est envoye
+    python3 marche.py --dry-run --forward 0.12 --duration 1.0
+
+    # 2) bascule d'etat seule, vitesse ZERO -- le robot ne doit PAS bouger,
+    #    ca valide juste que rl_terrain est atteint puis lower_body_balance
+    #    est regagne (repond a l'inconnue notee en section 3 -- CONFIRME : la
+    #    transition rl_terrain -> lower_body_balance se fait direct, sans
+    #    detour, cf logs "[ETAPE] mode lower_body_balance actif." en sortie)
+    python3 marche.py --forward 0.0 --duration 1.0
+
+    # 3) tout petit mouvement reel -- 0.12 CONFIRME TROP FAIBLE (voir note)
+    python3 marche.py --forward 0.12 --duration 1.0
+
+RESULTAT DU 2026-08-28 : etapes 1 et 2 OK (etat bascule proprement dans les
+deux sens, aucune erreur). Etape 3 (--forward 0.12) : le robot reagit
+(leger ajustement de posture visible en rl_terrain) mais NE MARCHE PAS --
+teste avec duration=1.0s ET duration=3.0s, meme resultat, donc pas un
+probleme de duree. En montant a --forward 0.45 : premier pas reel obtenu,
+le robot marche. Le seuil exact entre 0.12 et 0.45 n'a pas ete cherche.
+DEFAULT_FORWARD_MPS dans marche.py est maintenant 0.45 (etait
+0.12, jamais valide). QoS du topic verifiee au passage (ros2 topic info -v
+/motion/body_vel_cmd sur Nezha) : BEST_EFFORT/VOLATILE des deux cotes,
+compatible -- ce n'etait donc pas un probleme de QoS, juste de magnitude
+trop faible pour declencher un cycle de marche.
+
+Sequence complete marche + levee (orchestrateur.py), phase par phase,
+JAMAIS d'un coup au premier essai :
+
+    python3 orchestrateur.py --dry-run
+    python3 orchestrateur.py --only-phase marche --forward 0.12 --duration 1.0
+        # mesurer au ruban la distance bassin->bord podium, ajuster
+        # --forward/--duration jusqu'a ~14.6cm (PINCH_X=0.216 valide pour
+        # cette distance -- aucune valeur sim n'est transposable, unites
+        # differentes)
+    python3 orchestrateur.py --only-phase levee --lift-only-phase approche
+    python3 orchestrateur.py --only-phase levee --lift-only-phase serrage
+    python3 orchestrateur.py       # sequence complete, une fois tout valide separement
+
+
+==================================================================
+   DEMARRAGE RAPIDE (a refaire a chaque nouvelle session/jour)
+==================================================================
+
+  1) VERIFIER LA BATTERIE (etape 0 ci-dessus) AVANT TOUT.
+
+  2) SSH sur Nezha :
+         ssh user@192.168.0.163          (mot de passe : 1)
+
+  3) Dans le terminal SSH, sourcer l'environnement (etape 2) :
+         source /opt/ros/humble/setup.bash
+         source /home/user/source/engineai_workspace/install/setup.bash
+         export ROS_DOMAIN_ID=69
+         export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+         export ROS_LOCALHOST_ONLY=0
+
+  4) Se placer dans le dossier et valider en dry-run d'abord :
+         cd /home/user/projects/arm_test
+         python3 levee.py --dry-run
+
+  5) Puis, robot devant le carton, phase par phase :
+         python3 levee.py --only-phase approche
+         python3 levee.py                        (sequence complete)
+
+  (levee.py bascule lui-meme en lower_body_balance -- rien
+  d'autre a faire avant. Arret d'urgence = bouton "passive" manette.)
+
+  6) Pour la marche + sequence combinee (orchestrateur.py), TOUJOURS
+     dans cet ordre, jamais directement la sequence complete au premier
+     essai d'une session (cf section 5b pour le detail) :
+         python3 orchestrateur.py --dry-run
+         python3 marche.py --forward 0.0 --duration 1.0     (bascule d'etat seule, verifie que le robot ne bouge pas)
+         python3 orchestrateur.py --only-phase marche --forward 0.12 --duration 1.0
+         python3 orchestrateur.py --only-phase levee --lift-only-phase approche
+         python3 orchestrateur.py                                  (sequence complete, une fois tout valide)
+
+==================================================================

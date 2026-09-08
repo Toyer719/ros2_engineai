@@ -1,0 +1,31 @@
+
+joint_velocity_weight: 0.8
+imu_weight: 0.2
+
+joint_velocity_thresholds:
+  - 0.4
+  - 0.4
+  - 0.4
+  - 0.4
+  - 0.4
+  - 0.4
+  - 0.4
+  - 0.4
+  - 0.4
+  - 0.4
+  - 0.4
+  - 0.4
+
+imu_angular_velocity_thresholds:
+  - 0.05
+  - 0.05
+  - 10
+
+imu_linear_acceleration_thresholds:
+  - 0.2
+  - 0.2
+  - 10
+
+sliding_window_duration: 0.3
+
+standing_still_threshold: 0.8

@@ -1,0 +1,15 @@
+# Cache d'index IntelliSense VSCode -- ~1Go par dossier, regenere automatiquement,
+# jamais a versionner (c'est ce qui bloquait le push GitHub).
+**/.vscode/browse.vc.db*
+
+# Artefacts de build ROS2/colcon -- regeneres par colcon build, pas du code source.
+**/build/
+**/install/
+**/log/
+
+# Cache Python
+**/__pycache__/
+*.pyc
+
+# Backups dates crees pendant le developpement (git remplace ce role desormais)
+*.bak_*

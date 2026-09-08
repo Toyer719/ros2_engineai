@@ -1,0 +1,13 @@
+# Goal : commande de vitesse en boucle ouverte, meme convention que
+# PM01Gamepad.set_walk_velocity (gamepad_api.py) -- forward = LeftStick_X,
+# turn = RightStick_Y (voir virtual_gamepad_input_adapter.cc). Pas de feedback
+# de position : aucune lecture de pose, le robot est suppose avancer
+# `duration` secondes a vitesse a peu pres constante.
+float32 forward
+float32 turn
+float32 duration
+---
+# Result
+bool success
+---
+# Feedback

@@ -1,0 +1,86 @@
+COMMENT TESTER LES 3 SEQUENCES SUR LE VRAI ROBOT (Nezha)
+==========================================================
+Ecrit le 2026-09-03. Etat des reglages a cette date : rotation de poignet
+DESACTIVEE par defaut (ELBOW_YAW_ROTATION_DEG=0.0 dans levee.py), squeeze_y
+revenu a 0.090 (prise paume, valeur initiale). Genoux flechis pendant la
+levee (WALK_STANCE_SCALE=1.0). Voir COMMENT_LANCER_ROBOT_REEL.txt pour le
+detail complet (acces SSH, environnement a sourcer, historique de
+calibration) -- ce fichier-ci est juste le mode d'emploi rapide des 3 tests.
+
+
+0. AVANT TOUT, A CHAQUE SESSION
+--------------------------------
+    ssh user@192.168.0.163          (mot de passe : 1)
+
+    source /opt/ros/humble/setup.bash
+    source /home/user/source/engineai_workspace/install/setup.bash
+    export ROS_DOMAIN_ID=69
+    export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+    export ROS_LOCALHOST_ONLY=0
+    ros2 topic echo /hardware/power_info --once      # verifier la batterie
+
+    cd /home/user/projects/arm_test
+
+Arret d'urgence a tout moment : bouton "passive" de la telecommande
+(LB+RB) -- rend le robot mou, dernier recours.
+
+
+TEST 1 -- VISEE + SAISIE + LEVEE (levee.py seul)
+--------------------------------------------------
+Robot deja positionne devant le carton (~14.6cm bassin -> bord podium).
+
+    python3 levee.py --dry-run --no-confirm          # rien n'est envoye, verifier les angles affiches
+    python3 levee.py --no-confirm --only-phase approche   # observer la prise
+    python3 levee.py --no-confirm --only-phase serrage --skip-motion-state
+    python3 levee.py --no-confirm --only-phase levee --skip-motion-state
+
+Une fois chaque phase validee separement, sequence complete d'un coup :
+
+    python3 levee.py --no-confirm
+
+(bascule seul en lower_body_balance, pas besoin de le faire a la main)
+
+
+TEST 2 -- MARCHE (marche.py seul)
+------------------------------------
+Robot en position de depart, loin du carton.
+
+    python3 marche.py --dry-run --forward 0.45 --duration 6.0
+    python3 marche.py --forward 0.0 --duration 1.0          # bascule d'etat seule, le robot ne doit PAS bouger
+    python3 marche.py --forward 0.45 --duration 6.0          # marche reelle, valeurs validees le 2026-09-01
+
+Mesurer au ruban la distance bassin -> bord podium apres coup ; ajuster
+--forward/--duration si elle s'eloigne de ~14.6cm (valeur pour laquelle
+PINCH_X=0.216 dans levee.py est calibre).
+
+
+TEST 3 -- SEQUENCE COMPLETE (orchestrateur.py = marche + levee)
+--------------------------------------------------------------------
+Robot en position de depart, loin du carton (~175cm, position d'origine).
+
+    python3 orchestrateur.py --dry-run
+    python3 orchestrateur.py --forward 0.45 --duration 6.0 --no-confirm
+
+C'est une marche CONTINUE en un seul appel (pas de --walk-repeat, pas de
+pause de confirmation entre phases) -- validee ainsi le 2026-09-01.
+
+Pour re-valider phase par phase apres un changement de code (plus prudent) :
+
+    python3 orchestrateur.py --dry-run
+    python3 orchestrateur.py --only-phase marche --forward 0.45 --duration 6.0
+    python3 orchestrateur.py --only-phase levee --lift-only-phase approche
+    python3 orchestrateur.py --only-phase levee --lift-only-phase serrage
+    python3 orchestrateur.py --forward 0.45 --duration 6.0 --no-confirm   # sequence complete
+
+
+REACTIVER LA ROTATION DE POIGNET (prise sur le cote de la main)
+--------------------------------------------------------------------
+Desactivee par defaut le 2026-09-03 (voir levee.py, commentaire au-dessus de
+ELBOW_YAW_ROTATION_DEG) -- suspicion de contact avant-bras/carton du fait du
+coude tres flechi que ca impose, pas encore confirme. Pour la re-tester
+isolement (sans la reactiver par defaut) :
+
+    python3 levee.py --no-confirm --wrist-rotation-deg 90 --only-phase approche
+
+Comparer avec le meme test a --wrist-rotation-deg 0 pour isoler si le
+probleme vient bien de la geometrie du coude.

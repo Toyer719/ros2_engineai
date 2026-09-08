@@ -1,0 +1,22 @@
+<mujoco model="global_model">
+    <include file="/home/equansrobotic/engineai_robotics_native_sdk/assets/resource/robot/pm01_edu/xml/serial_pm01_edu_carton_liftable.xml"/>
+    <include file="/home/equansrobotic/engineai_robotics_native_sdk/assets/resource/environment/ground.xml"/>
+
+    <!-- 2026-08-26 (test2, corrige) : position calquee sur l'ecart deja valide du test1
+         (0.3674 depuis le robot home, X=0.0 verifie dans ce modele -- pas -0.075145,
+         valeur perimee de docs/pm01_box_geometry.txt), decale de 0.96m (4 pas de
+         marche). Garantit la meme marge corps-podium et portee bras que test1 apres
+         la marche. Copie de reference coherente avec
+         tools/robot_arm_ik_podium_test2/lift_carton.py (memes valeurs). -->
+    <worldbody>
+        <body name="podium" pos="1.6449 0.0 0.2675">
+            <geom name="podium_block" type="box" size="0.455 0.355 0.2675" mass="20"
+                  rgba="0.55 0.55 0.58 1" friction="1.0 0.005 0.0001" group="0"/>
+        </body>
+        <body name="carton" pos="1.3274 0.0 0.681">
+            <freejoint/>
+            <geom name="carton_box" type="box" size="0.1375 0.0955 0.146" mass="0.220"
+                  rgba="0.65 0.48 0.32 1" friction="1.0 0.005 0.0001" group="0"/>
+        </body>
+    </worldbody>
+</mujoco>

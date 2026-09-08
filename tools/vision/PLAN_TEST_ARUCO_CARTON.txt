@@ -1,0 +1,180 @@
+PLAN DE TEST — DETECTION DU CARTON PAR ARUCO (camera bassin)
+==============================================================
+But : valider chaque brique separement AVANT de toucher a choreo_native_v4.py,
+pour isoler facilement d'ou vient un probleme si ca ne marche pas du premier
+coup (impression, camera, detection, ou pose 3D).
+
+Le marqueur a imprimer se trouve deja genere :
+  tools/vision/aruco_carton_marker_DICT_4X4_50_id0.png
+  (DICT_4X4_50, ID=0 -- dictionnaire cv2.aruco.DICT_4X4_50)
+
+
+ETAPE 0 -- Environnement Python
+--------------------------------
+Verifier que cv2 et cv2.aruco s'importent sans erreur dans l'environnement qui
+fera tourner la detection :
+  python3 -c "import cv2; print(cv2.__version__)"
+  python3 -c "import cv2.aruco; print('ok')"
+
+cv_bridge N'EST PAS necessaire : tools/vision/aruco_carton_test.py (etape 5-6,
+deja ecrit) convertit l'image a la main (reshape numpy) au lieu de passer par
+cv_bridge -- ca evite un bug deja rencontre le 2026-08-12 dans cette VM
+(cv_bridge plante avec "_ARRAY_API not found", conflit numpy 1.x/2.x). Verifier
+quand meme rclpy :
+  python3 -c "import rclpy; print('ok')"
+
+VALIDATION : les 3 imports (cv2, cv2.aruco, rclpy) passent sans erreur.
+
+
+ETAPE 1 -- Impression du marqueur
+-----------------------------------
+Imprimer tools/vision/aruco_carton_marker_DICT_4X4_50_id0.png.
+
+IMPORTANT : dans les options d'impression, choisir "Taille reelle" / "100%" /
+"Actual size" -- PAS "Ajuster a la page" / "Fit to page". Une mise a l'echelle
+automatique fausse directement le calcul de pose (solvePnP a besoin de la
+vraie taille physique du marqueur).
+
+Apres impression, MESURER au double-decimetre/regle :
+  - le cote du carre noir+blanc du motif (zone marqueur) : doit faire 101.6mm
+  - le cote total de la feuille imprimee (avec marge blanche) : doit faire 142.2mm
+
+Si la mesure ne correspond pas a ~1-2mm pres, l'imprimante a rescale l'image
+malgre le reglage "100%" -- noter la taille REELLEMENT mesuree, c'est cette
+valeur (en metres) qu'il faudra utiliser plus tard comme parametre
+`marker_size` dans solvePnP, pas la valeur theorique.
+
+VALIDATION : mesure au double-decimetre coherente avec l'impression, taille
+reelle notee quelque part (ex. dans ce fichier ou un commentaire de code).
+
+
+ETAPE 2 -- Montage sur le carton
+-----------------------------------
+Coller le marqueur CENTRE et A PLAT sur la face avant du carton -- celle que
+le robot voit en s'approchant (l'axe d'approche X dans la geometrie deja
+mesuree, PAS une des faces laterales ou les mains viennent pincer -- ne pas
+gener la prise).
+
+Face avant = 191x292mm (voir pm01_box_geometry.txt) -- le marqueur de
+142.2mm de cote imprime rentre dedans avec un peu de marge, verifier
+visuellement avant de coller definitivement.
+
+VALIDATION : marqueur bien centre (mesurer les 4 marges autour, elles
+doivent etre egales des 2 cotes), colle a plat (pas de bosse/pli), pas
+d'angle visible par rapport aux bords du carton.
+
+
+ETAPE 3 -- Trouver le topic camera reel
+-------------------------------------------
+FAIT (2026-08-12) : /camera/pelvis/image_raw -- deja le defaut dans
+tools/vision/aruco_carton_test.py.
+
+Reste a verifier avant de lancer le script :
+  ros2 topic info /camera/pelvis/image_raw -v   # confirme le type de message :
+                                                 # doit etre sensor_msgs/msg/Image
+                                                 # (PAS CompressedImage -- le script
+                                                 # actuel ne gere que le brut, voir
+                                                 # commentaire _image_msg_to_bgr)
+  ros2 topic hz /camera/pelvis/image_raw         # confirme que ca publie (frequence > 0)
+  ros2 topic list | grep -i camera_info          # cherche le topic d'intrinseques --
+                                                  # le script suppose par defaut
+                                                  # /camera/pelvis/camera_info (deduit
+                                                  # automatiquement), a corriger via
+                                                  # --camera-info-topic si different
+
+VALIDATION : type de message confirme Image (pas CompressedImage), frequence
+non-nulle, topic camera_info localise.
+
+
+ETAPE 4 -- Intrinseques camera (necessaire pour la pose 3D)
+----------------------------------------------------------------
+solvePnP a besoin de la matrice camera (K, 3x3) et des coefficients de
+distorsion.
+
+Cas A -- un topic camera_info existe (etape 3) :
+  ros2 topic echo <topic_camera_info> --once
+  -> recuperer les champs `k` (matrice K, 9 valeurs) et `d` (distorsion).
+
+Cas B -- pas de camera_info publie : il faut calibrer manuellement avec un
+damier (chessboard) et cv2.calibrateCamera -- plus long, a faire seulement si
+le Cas A echoue.
+
+VALIDATION : matrice K (3x3) et coefficients de distorsion obtenus et notes
+quelque part (fichier de config a creer, ex. tools/vision/camera_intrinsics.yaml).
+
+
+ETAPE 5 -- Script de detection standalone (SANS toucher a choreo_native)
+-------------------------------------------------------------------------
+DEJA ECRIT : tools/vision/aruco_carton_test.py -- s'abonne a l'image + camera_info,
+detecte le marqueur, calcule sa pose, et republie une image annotee (topic
+/camera/pelvis/aruco_debug) A OUVRIR DANS FOXGLOVE pour verifier visuellement
+la detection (contour du marqueur dessine + axes XYZ).
+
+Lancer (remplacer 0.1016 par la taille REELLEMENT MESUREE a l'etape 1) :
+  python3 tools/vision/aruco_carton_test.py --marker-size 0.1016
+
+Tester a plusieurs distances/angles realistes (celles ou le robot devra
+detecter le carton pendant walk_to_xy -- standoff actuel = 0.55m dans
+choreo_native.py, donc tester au moins de ~2m jusqu'a 0.5m).
+
+VALIDATION : detection stable (contour + axes visibles dans Foxglove sur la
+majorite des frames) sur toute la plage de distance utile, pas de faux
+positifs. Les logs console (throttles a 1/s) confirment ID detecte + distance.
+
+
+ETAPE 6 -- Pose 3D (solvePnP) -- sanity check contre une mesure reelle
+---------------------------------------------------------------------------
+Meme script que l'etape 5 (le calcul de pose y est deja integre, via
+cv2.SOLVEPNP_IPPE_SQUARE, des que le topic camera_info est recu -- sinon le
+script previent en warning qu'il detecte le marqueur mais ne peut pas encore
+calculer sa pose).
+
+Poser le carton a une distance connue et mesuree au double-decimetre/laser
+depuis la camera (ex. exactement 1.000m), lancer le script, comparer la
+"distance=" affichee dans les logs a la mesure reelle.
+
+VALIDATION : erreur entre distance mesuree et distance affichee < ~2-3cm.
+Si l'erreur est plus grande : verifier en premier --marker-size (cause la
+plus frequente d'erreur d'echelle en solvePnP -- doit etre la taille REELLE
+mesuree a l'etape 1, pas la valeur theorique de generation).
+
+
+ETAPE 7 -- Deduction centre + faces laterales du carton
+-------------------------------------------------------------
+A partir de la pose du marqueur (etape 6), calculer :
+  - centre du carton = position marqueur + demi-profondeur (137.5mm) le long
+    de l'axe normal a la face, dans le repere du marqueur
+  - faces laterales (cote pince) = centre +/- 95.5mm le long de l'axe Y du
+    marqueur/carton
+
+Verifier visuellement/manuellement (mesure au double-decimetre sur le vrai
+carton posé) que ces positions calculees correspondent a la realite.
+
+VALIDATION : centre et faces laterales calcules coherents (±2-3cm) avec les
+mesures physiques du carton pose au sol.
+
+
+ETAPE 8 -- Transformation camera -> robot (deja faite selon toi)
+-----------------------------------------------------------------
+Appliquer la transformation camera->robot deja existante a la pose obtenue
+etape 7. Comparer le resultat aux anciennes constantes codees en dur
+CARTON_X, CARTON_Y = 2.2, 0.0 (choreo_native.py) en posant le carton
+approximativement a cet endroit connu.
+
+VALIDATION : coordonnees calculees proches des anciennes constantes (± une
+dizaine de cm, l'ancien placement etait approximatif de toute facon) --
+confirme que toute la chaine (marqueur -> pose -> transformation) est
+cohérente de bout en bout AVANT de brancher ca dans choreo_native_v4.py.
+
+
+ETAPE 9 -- Integration dans choreo_native_v4.py
+----------------------------------------------------
+Seulement une fois les etapes 0-8 validees. Remplacer :
+  - CARTON_X, CARTON_Y fixes -> valeurs lues depuis le detecteur ArUco
+  - pinch_x/pinch_y/pinch_yaw_offset (actuellement calcules depuis l'odometrie
+    + une position de carton supposee) -> calcules depuis la pose reellement
+    detectee (etape 7), potentiellement plus precis que l'estimation actuelle
+    par odometrie seule
+
+(Cette derniere etape sera faite une fois que tu me donnes le topic camera et
+la fonction/mecanisme de transformation existante, cf message precedent.)

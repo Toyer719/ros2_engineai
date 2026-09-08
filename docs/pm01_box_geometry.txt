@@ -1,0 +1,42 @@
+PM01 - Géométrie boîte / bras (simulation MuJoCo)
+==================================================
+Modèle: assets/resource/pm01_edu_carton.xml
+Pose de référence: keyframe "floating_base_homing" (recalibrée)
+
+Programme de test des angles épaule/coude:
+  scripts/move_arm.py
+  Usage: python3 move_arm.py --arm right --shoulder <deg> --elbow <deg>
+
+Longueurs des segments de bras (identiques gauche/droite):
+  Épaule -> Coude (bras)       : ~216 mm (0.216 m)
+  Coude  -> bout d'avant-bras  : ~156 mm (0.156 m)
+  (pas de poignet/main modélisé dans ce XML simplifié)
+
+Position de la boîte ("carton", posée sur "podium"):
+  Position monde : x = 0.6, y = 0.0, z = 0.80
+
+Position du robot (base flottante, keyframe recalibrée):
+  Position monde : x = -0.075145, y = 0.014289, z = 0.820203
+
+Boîte par rapport au robot (translation simple, axes monde):
+  dx ≈ +0.675 m (≈ 67.5 cm devant)
+  dy ≈ -0.014 m (≈ 1.4 cm, quasi nul -> boîte quasiment centrée devant le robot)
+
+Boîte par rapport au repère de l'épaule (cinématique directe MuJoCo,
+orientation du bras prise en compte, pose "floating_base_homing"):
+
+  Épaule DROITE (LINK_SHOULDER_PITCH_R):
+    x ≈ +0.690 m
+    y ≈ +0.157 m
+    z ≈ -0.302 m
+
+  Épaule GAUCHE (LINK_SHOULDER_PITCH_L), pour comparaison:
+    x ≈ +0.690 m
+    y ≈ -0.101 m
+    z ≈ -0.302 m
+
+Remarque:
+  Longueur totale du bras tendu ≈ 0.216 + 0.156 = 0.372 m
+  Distance épaule droite -> boîte ≈ sqrt(0.690² + 0.157² + 0.302²) ≈ 0.775 m
+  => la boîte est hors de portée du bras tendu, il faut que le robot
+     avance ou se penche pour l'atteindre.

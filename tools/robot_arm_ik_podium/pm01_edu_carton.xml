@@ -1,0 +1,23 @@
+<mujoco model="global_model">
+    <include file="/home/equansrobotic/engineai_robotics_native_sdk/assets/resource/robot/pm01_edu/xml/serial_pm01_edu_carton_liftable.xml"/>
+    <include file="/home/equansrobotic/engineai_robotics_native_sdk/assets/resource/environment/ground.xml"/>
+
+    <!-- 2026-08-26 (v3, definitif) : podium (bloc unique 91x53.5x71cm) + carton places
+         pour respecter la mesure REELLE utilisateur -- 20cm entre le bord du podium et
+         l'extremite du bassin, AU REPOS. La prise necessite ensuite un pas en avant
+         (~14cm, voir --pas-avant / marcher() dans lift_carton.py) plutot qu'une
+         position de repos deja collee ou une flexion de genoux exageree (les deux
+         essayees et rejetees -- cf plan de session). Copie de reference coherente avec
+         tools/robot_arm_ik_podium/lift_carton.py (memes valeurs). -->
+    <worldbody>
+        <body name="podium" pos="0.6849 0.0 0.2675">
+            <geom name="podium_block" type="box" size="0.455 0.355 0.2675" mass="20"
+                  rgba="0.55 0.55 0.58 1" friction="1.0 0.005 0.0001" group="0"/>
+        </body>
+        <body name="carton" pos="0.3674 0.0 0.681">
+            <freejoint/>
+            <geom name="carton_box" type="box" size="0.1375 0.0955 0.146" mass="0.220"
+                  rgba="0.65 0.48 0.32 1" friction="1.0 0.005 0.0001" group="0"/>
+        </body>
+    </worldbody>
+</mujoco>

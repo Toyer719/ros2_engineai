@@ -1,0 +1,46 @@
+COMMENT RELANCER L'ENVIRONNEMENT DOCKER (engineai_robotics_native_sdk)
+=======================================================================
+
+Le script "engineai_robotics_env" a été installé dans ~/.local/bin
+(ajouté au PATH via ~/.bashrc). Ouvre un nouveau terminal ou fais
+"source ~/.bashrc" pour qu'il soit reconnu la première fois.
+
+1) OUVRIR UN SHELL DANS LE CONTENEUR (usage courant)
+-----------------------------------------------------
+    engineai_robotics_env
+
+Ce que ça fait automatiquement :
+  - si le conteneur n'existe pas encore -> le crée (docker compose up -d)
+  - s'il existe mais est arrêté          -> le redémarre
+  - s'il tourne déjà                     -> ouvre juste un shell dedans
+Tu arrives dans /home/equansrobotic/engineai-robotics/engineai_robotics_native_sdk
+(le dossier du projet, monté depuis l'hôte).
+
+2) LANCER UNE COMMANDE PONCTUELLE SANS OUVRIR DE SHELL
+--------------------------------------------------------
+    engineai_robotics_env ./build.sh
+    engineai_robotics_env ./run.sh pm01_edu
+
+3) REBUILD LE SDK APRES UNE MODIF DE CODE
+--------------------------------------------
+    engineai_robotics_env
+    ./build.sh
+
+4) ARRETER LE CONTENEUR (sans le supprimer)
+----------------------------------------------
+    docker stop engineai_robotics_env
+
+Il repartira tout seul au prochain "engineai_robotics_env".
+
+5) TOUT SUPPRIMER (conteneur + config + le script lui-même)
+----------------------------------------------------------------
+    engineai_robotics_env clean
+
+ATTENTION : cette commande supprime aussi le launcher ~/.local/bin/engineai_robotics_env.
+Pour tout reconstruire ensuite, il faut relancer depuis le dépôt :
+    cd ~/engineai-robotics/engineai_robotics_native_sdk
+    ./docker/generate.sh
+
+6) VERIFIER SI LE CONTENEUR TOURNE
+--------------------------------------
+    docker ps --filter name=engineai_robotics_env

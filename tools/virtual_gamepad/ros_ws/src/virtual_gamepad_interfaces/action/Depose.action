@@ -1,0 +1,34 @@
+# Goal : pose le carton tenu (bras+jambes en override, cf Lift.action/
+# Pivot.action) -- l'INVERSE de Lift.action : baisse (Depose) -> ouvre la
+# pince (Desserrage) -> retire les bras (Degagement) -> relache. Suppose
+# que le robot vient d'arriver a un 2e poste par walk_to APRES un
+# Pivot.action avec free_legs_for_walk=true (jambes rendues a pd_stand
+# pendant la marche, bras/buste restes tenus) -- ce node commence donc par
+# REFAIRE la flexion des genoux (walk_stance) depuis zero, exactement comme
+# lift.py au debut de sa propre sequence, avant de bouger les bras.
+#
+# squeeze_y/pinch_x/hold_z DOIVENT correspondre exactement a ce que lift.py/
+# pivot.py tenaient juste avant (meme geometrie de prise) -- sinon un saut
+# de position au premier message de ce node (voir la meme remarque dans
+# Pivot.action sur le remplacement complet de /motion/joint_override_command).
+float32 pinch_x 0.40
+float32 pinch_y 0.35
+float32 pinch_z -0.054
+float32 squeeze_y 0.095
+float32 open_y 0.35
+float32 hold_z 0.146
+float32 drop_z -0.054
+float32 pinch_yaw_offset 0.0
+float32 depose_duration 3.0
+float32 desserrage_duration 2.0
+float32 degagement_duration 2.0
+bool walk_stance true
+float32 walk_stance_scale 3.0
+float32 walk_stance_stiffness_scale 1.8
+float32 walk_stance_duration 3.0
+float32 release_ramp_seconds 1.5
+---
+# Result
+bool success
+---
+# Feedback

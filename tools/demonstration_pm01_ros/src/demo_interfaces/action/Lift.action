@@ -1,0 +1,19 @@
+bool release_after true
+float32 pinch_x 0.38
+float32 pinch_y 0.28
+float32 pinch_z -0.054
+float32 pinch_yaw_offset 0.0
+float32 squeeze_y 0.086
+float32 lift_z 0.146
+float32 approach_duration 2.0
+float32 squeeze_duration 1.5
+float32 lift_duration 3.0
+float32 hold_seconds 3.0
+float32 release_ramp_seconds 1.5
+bool walk_stance true
+float32 walk_stance_scale 1.5
+float32 walk_stance_stiffness_scale 1.8
+float32 walk_stance_duration 3.0
+---
+bool success
+---

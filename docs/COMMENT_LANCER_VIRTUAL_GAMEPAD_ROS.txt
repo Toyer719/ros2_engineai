@@ -1,0 +1,78 @@
+COMMENT LANCER LA SEQUENCE ROS virtual_gamepad (stand -> walk_to -> lift)
+===========================================================================
+
+Vu la 2026-08-18. Suppose que le container docker existe deja (voir
+COMMENT_RELANCER_DOCKER.txt si besoin de le (re)creer).
+
+0) OUVRIR UN SHELL DANS LE CONTENEUR
+-------------------------------------
+    engineai_robotics_env
+
+Repete cette etape dans CHAQUE terminal utilise ci-dessous -- chaque
+terminal a son propre environnement, rien n'est partage entre eux tant
+qu'on ne source pas les memes fichiers dans chacun.
+
+1) LANCER LA SIMULATION (2 process, EN PARALLELE, jamais l'un sans l'autre)
+-----------------------------------------------------------------------------
+Dans le conteneur (2 terminaux, ou en arriere-plan avec docker exec -d) :
+
+    cd /home/equansrobotic/engineai_robotics_native_sdk
+    source /opt/ros/humble/setup.bash
+    ./run.sh pm01_edu_carton
+
+    # terminal separe :
+    cd /home/equansrobotic/engineai_robotics_native_sdk
+    ./scripts/run_mujoco.sh pm01_edu_carton
+
+run.sh seul OU run_mujoco.sh seul NE SUFFIT PAS : run_mujoco.sh ne fait que
+la physique + le pont LCM bas niveau, run.sh charge le "cerveau" (machine a
+etats, politique de marche, input_command_arbiter). Sans les deux, le robot
+reste inerte.
+
+2) BUILD (une seule fois, ou apres toute modif du code dans ros_ws/src/)
+---------------------------------------------------------------------------
+    cd /home/equansrobotic/stagiaire_1/tools/virtual_gamepad/ros_ws
+    source /opt/ros/humble/setup.bash
+    source /home/equansrobotic/engineai_robotics_native_sdk/build/ros2_env/install/local_setup.bash
+    colcon build --packages-select virtual_gamepad_interfaces virtual_gamepad_ros
+
+ATTENTION : ros2 run / ros2 launch executent la copie INSTALLEE
+(ros_ws/install/...), pas le fichier source directement -- toujours
+rebuild apres avoir modifie un .py dans ros_ws/src/ sinon l'ancienne
+version continue de tourner sans erreur (piege deja rencontre).
+
+3) LANCER LA SEQUENCE (1 seul terminal, 1 seule fois)
+--------------------------------------------------------
+    cd /home/equansrobotic/stagiaire_1/tools/virtual_gamepad/ros_ws
+    source /opt/ros/humble/setup.bash
+    source /home/equansrobotic/engineai_robotics_native_sdk/build/ros2_env/install/local_setup.bash
+    source install/setup.bash
+
+    ros2 launch virtual_gamepad_ros virtual_gamepad.launch.py
+
+Ca demarre 4 process d'un coup : walk_to, stand, lift, chef. chef attend
+que les 3 autres soient prets (jusqu'a 10s chacun) puis execute
+automatiquement stand() -> walk_to(forward=0.5, duration=8.0) -> lift().
+
+NE PAS lancer un 2e "ros2 run virtual_gamepad_ros chef" (ou un 2e launch)
+en parallele -- deux chef en meme temps envoient chacun leurs propres
+goals aux memes serveurs stand/walk_to/lift, ca double l'execution et
+brouille les logs.
+
+4) (OPTIONNEL) TESTER UN NODE ISOLEMENT SANS chef
+------------------------------------------------------
+Terminal A (les 3 sources de l'etape 3), lance juste le node voulu :
+    ros2 run virtual_gamepad_ros lift
+    (ou walk_to / stand)
+
+Terminal B (les 3 memes sources -- INDISPENSABLE, sinon "The passed action
+type is invalid"), envoie un but a la main :
+    ros2 action list -t                 # verifie que le type apparait
+    ros2 action send_goal /lift virtual_gamepad_interfaces/action/Lift "{}"
+    ros2 action send_goal /stand virtual_gamepad_interfaces/action/Stand "{settle_seconds: 10.0}"
+    ros2 action send_goal /walk_to virtual_gamepad_interfaces/action/WalkTo "{forward: 0.5, duration: 8.0}"
+
+RAPPEL PREREQUIS lift (en plus du reste) : lever.py importe
+interface_protocol.msg.JointOverrideCommand -- necessite la source de
+l'overlay SDK (etape 3, 2e ligne) EN PLUS du setup.bash de ce ros_ws.
+walk_to/stand n'en ont pas besoin.

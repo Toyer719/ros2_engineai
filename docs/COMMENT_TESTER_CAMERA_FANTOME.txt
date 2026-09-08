@@ -1,0 +1,73 @@
+COMMENT TESTER LA "CAMERA FANTOME" (detection ArUco en simulation)
+=====================================================================
+Vu le 2026-08-18. Prerequis : run.sh + run_mujoco.sh deja lances (voir
+COMMENT_LANCER_VIRTUAL_GAMEPAD_ROS.txt), robot idealement en pd_stand a
+quelques dizaines de cm du carton (position 2.2, 0, 0.796) pour voir
+quelque chose d'utile.
+
+1) Terminal A -- lance la camera fantome (pas besoin de l'overlay SDK ici,
+   juste ROS humble -- lever/interface_protocol ne sont pas utilises par ce
+   script, contrairement a lift) :
+    source /opt/ros/humble/setup.bash
+    cd /home/equansrobotic/stagiaire_1/tools/vision
+    python3 pelvis_camera_sim.py
+
+   Doit afficher "Camera fantome pelvis prete..." puis rester silencieux
+   (pas de log par frame, seulement un warning si sim_state n'arrive jamais).
+
+2) Terminal B -- lance la detection ArUco dessus (marker-size THEORIQUE, rien
+   n'est imprime en simulation) :
+    source /opt/ros/humble/setup.bash
+    cd /home/equansrobotic/stagiaire_1/tools/vision
+    python3 aruco_carton_test.py --marker-size 0.1016 \
+        --image-topic /camera/pelvis_sim/image_raw
+
+   Doit logger "marqueur 0 detecte -- distance=...m" a ~1x/seconde des que le
+   carton est dans le champ de vision (le marqueur est suppose sur la face
+   avant du carton, cote robot qui approche par x<2.2 -- carton suppose
+   IMMOBILE a sa position XML initiale, invalide une fois saisi/deplace).
+
+3) (Optionnel) Verifier visuellement dans Foxglove : s'abonner a
+   /camera/pelvis_sim/aruco_debug (contour + axes XYZ dessines par
+   aruco_carton_test.py).
+
+4) Terminal C -- publie la position du carton en repere ROBOT (pas juste
+   camera), consommable par chef.approach_carton() :
+    source /opt/ros/humble/setup.bash
+    cd /home/equansrobotic/stagiaire_1/tools/vision
+    python3 carton_pose_publisher.py --marker-size 0.1016 \
+        --image-topic /camera/pelvis_sim/image_raw
+
+   Publie geometry_msgs/PoseStamped sur /vision/carton_pose_base (repere
+   LINK_BASE : x=distance devant, y=decalage lateral, +=a gauche). Verifier :
+    ros2 topic echo /vision/carton_pose_base
+
+5) approach_carton() (chef_node.py) : appelle repetitivement walk_to() par
+   petites impulsions (1s par defaut) en corrigeant le cap a partir de
+   /vision/carton_pose_base, jusqu'a etre a ~0.42m du marqueur et centre
+   lateralement. NE MODIFIE PAS walk_to (reste boucle ouverte, decision du
+   17/08) -- le servoing est fait par chef qui rappelle walk_to() en boucle.
+   PAS ENCORE chainee dans run_sequence() -- a tester isolement d'abord.
+   ATTENTION : le signe de la correction de cap (`turn`) n'est PAS verifie
+   empiriquement pour ce scenario precis (deduit par analogie d'un autre
+   test, pivot en marchant) -- au premier essai, si le robot s'eloigne du
+   carton au lieu de se centrer, inverser le signe dans
+   chef_node.py::approach_carton() (`turn = -turn_gain * y` ->
+   `turn = +turn_gain * y`).
+
+Limites connues :
+- Marqueur ArUco compose par OpenCV (warpPerspective) directement sur
+  l'image rendue, PAS un vrai texture MuJoCo -- voir shadow_scene.py pour
+  le pourquoi (mapping texture MuJoCo teste peu fiable sur cette version).
+- ATTENTION taille du PNG : aruco_carton_marker_DICT_4X4_50_id0.png a une
+  marge blanche autour du motif (142.2mm feuille / 101.6mm motif) --
+  pelvis_camera_sim.py rogne automatiquement via
+  shadow_scene.load_marker_pattern_bgr() avant de composer, SINON la
+  distance calculee est fausse d'un facteur ~1.4 (bug rencontre et corrige
+  le 19/08 -- si un autre script recharge ce PNG pour le composer/mesurer,
+  utiliser cette meme fonction, pas cv2.imread direct).
+- Le carton n'est PAS suivi depuis la sim reelle (aucun canal LCM ne
+  l'expose) -- position XML initiale supposee fixe.
+- Cible la SIMULATION uniquement -- aucune camera reelle n'existe sur le
+  robot dans ce projet pour l'instant (le travail ArUco du 12/08 visait le
+  robot reel, topic /camera/pelvis/image_raw, jamais branche depuis).
