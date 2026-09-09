@@ -21,15 +21,24 @@ CHANNEL = "virtual_gamepad/gamepad_keys"
 SERVER_TIMEOUT_S = 10.0
 GOAL_TIMEOUT_S = 300.0
 
-PROVEN_PINCH_X = 0.35
+# 2026-09-09, CORRECTION D'URGENCE (meme cause que la chute reelle sur Nezha) :
+# avec PINCH_Z eleve (bras vers le haut, podium remesure a 0.8m), PROVEN_PINCH_X=0.35
+# fait depasser J14_SHOULDER_ROLL_L/J19_SHOULDER_ROLL_R hors de leur limite mecanique
+# (Guide_PM01_FR.pdf : [-35, 135]deg) DES LE SERRAGE (-41.5deg calcule, avant meme toute
+# levee) -- confirme numeriquement (solve_ik + limites du guide, jamais teste en direct
+# en simu, trouve avant qu'une chute ne se produise ici). Baisse a 0.26 (marge ~7.6deg).
+# ATTENTION : ceci reduit la portee du bras de 9cm -- WALK_DURATION (calibree pour amener
+# le robot a la bonne distance pour un reach de 0.35) devra probablement etre recalibree
+# (marche plus longue, robot plus pres du carton) pour que le bras atteigne encore le
+# carton avec ce reach reduit. PAS ENCORE VERIFIE en sim avec ce nouveau PINCH_X.
+PROVEN_PINCH_X = 0.26
 PINCH_Y = 0.35
 SQUEEZE_Y = 0.095
 PINCH_Z = 0.106
-# 2026-09-09 : jusqu'ici jamais passe explicitement, retombait sur le defaut perime
-# (0.146) de Lift.action/Pivot.action -- garde la meme amplitude de montee que l'ancien
-# PINCH_Z=-0.139 (0.285m), voir meme calcul dans levee.py (robot reel). PINCH_Z baisse
-# de 0.126 a 0.106 (retour du 1er essai reel : "leve les bras un peu trop"), LIFT_Z suit.
-LIFT_Z = 0.391
+LIFT_Z = 0.20                 # meme correction que LIFT_Z reel (levee.py) : 0.391
+                               # depassait aussi la limite d'epaule en fin de levee --
+                               # 0.20 verifie dans les limites (marge ~4.2deg) avec
+                               # PINCH_X=0.26 ci-dessus.
 
 WALK_STICK = 0.85
 
