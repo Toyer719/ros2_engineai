@@ -25,6 +25,10 @@ PROVEN_PINCH_X = 0.35
 PINCH_Y = 0.35
 SQUEEZE_Y = 0.095
 PINCH_Z = 0.126
+# 2026-09-09 : jusqu'ici jamais passe explicitement, retombait sur le defaut perime
+# (0.146) de Lift.action/Pivot.action -- garde la meme amplitude de montee que l'ancien
+# PINCH_Z=-0.139 (0.285m), voir meme calcul dans levee.py (robot reel).
+LIFT_Z = 0.411
 
 WALK_STICK = 0.85
 
@@ -155,14 +159,14 @@ class ChefNode(Node):
 
         self._publish_step(50)
         if not self.lift(pinch_x=pinch_x, pinch_y=PINCH_Y, pinch_z=PINCH_Z, squeeze_y=SQUEEZE_Y,
-                          lift_duration=5.0, hold_seconds=3.0, walk_stance=False,
+                          lift_z=LIFT_Z, lift_duration=5.0, hold_seconds=3.0, walk_stance=False,
                           walk_stance_scale=WALK_STANCE_SCALE, only_phase="levee", release_after=False):
             self.get_logger().error("run_sequence : lift() a echoue (levee) -- arret.")
             return
 
         self._publish_step(60)
         if not self.pivot(pinch_x=pinch_x, pinch_y=PINCH_Y, pinch_z=PINCH_Z, squeeze_y=SQUEEZE_Y,
-                           angle_deg=180.0, walk_stance_scale=WALK_STANCE_SCALE):
+                           lift_z=LIFT_Z, angle_deg=180.0, walk_stance_scale=WALK_STANCE_SCALE):
             self.get_logger().error("run_sequence : pivot(180) a echoue -- arret.")
             return
 

@@ -111,7 +111,12 @@ SQUEEZE_Y = 0.090         # 2026-09-03 : retour a la valeur initiale (0.090, pri
 # complet de calibration de SQUEEZE_Y dans l'ancienne version de ce commentaire, cf. git/backup
 # si besoin -- 0.1405/0.086/0.05 = valeurs simu non transposables telles quelles au reel,
 # 0.095 juge "pas assez serre" le 31/08 SANS rotation de poignet).
-LIFT_Z = 0.146
+LIFT_Z = 0.411               # 2026-09-09 : etait 0.146 (absolu, pas relatif a PINCH_Z) --
+                              # avec l'ancien PINCH_Z=-0.139 ca faisait une montee de 0.285m.
+                              # Garde la MEME amplitude de montee avec le nouveau
+                              # PINCH_Z=+0.126 : 0.126+0.285=0.411. Sans ce fix, la levee ne
+                              # montait plus que de 2cm (0.126->0.146, quasi un non-mouvement)
+                              # -- trouve via le dry-run avant tout essai reel.
 APPROACH_DURATION = 4.0
 SQUEEZE_DURATION = 4.0
 LIFT_DURATION = 5.0
