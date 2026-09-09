@@ -66,6 +66,7 @@ def main():
         node = rclpy.create_node("orchestrateur")
 
     try:
+        marche_effectuee = False
         if args.only_phase in (None, "marche"):
             for i in range(args.walk_repeat):
                 if args.walk_repeat > 1:
@@ -85,6 +86,7 @@ def main():
                     print(f"[ERREUR] echec de la marche (repetition {i + 1}/{args.walk_repeat}, "
                           "bascule d'etat) -- arret.", flush=True)
                     return
+                marche_effectuee = True
 
         if args.only_phase == "marche":
             print("[INFO] --only-phase marche : arret ici, robot cense etre en "
@@ -102,7 +104,11 @@ def main():
         )
         lever = None
         if not args.dry_run:
-            if not args.skip_motion_state:
+            # marche() se termine deja en lower_body_balance quand elle reussit -- ne
+            # revalider l'etat que si la marche a ete sautee (only_phase="levee" ou
+            # walk_repeat=0), pour eviter un 2e appel bloquant redondant (jusqu'a 1s
+            # d'attente d'un message d'etat frais) juste avant de lever les bras.
+            if not args.skip_motion_state and not marche_effectuee:
                 ok = lift_mod.ensure_motion_state(node, "lower_body_balance",
                                                    timeout=lift_mod.MOTION_STATE_TIMEOUT)
                 if not ok:

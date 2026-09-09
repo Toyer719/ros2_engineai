@@ -115,7 +115,11 @@ LIFT_Z = 0.146
 APPROACH_DURATION = 4.0
 SQUEEZE_DURATION = 4.0
 LIFT_DURATION = 5.0
-HOLD_SECONDS = 3.0
+HOLD_SECONDS = 0.0          # 2026-09-09 : etait 3.0 (maintien immobile en haut avant
+                             # redressement genoux + relachement) -- retire a la demande
+                             # de l'utilisateur pour accelerer (perceptible comme "il
+                             # pause avant de descendre"). Enchaine directement sur le
+                             # redressement/relachement.
 RELEASE_RAMP_SECONDS = 4.0   # rampe de poids avant release() -- une coupure instantanee fait
                              # tomber les bras d'un coup vers la pose de la politique de marche
 MOTION_STATE_TIMEOUT = 3.0
