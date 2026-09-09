@@ -136,9 +136,9 @@ class ChefNode(Node):
         self.get_logger().info(f"--- etape {step} ---")
 
     def run_sequence(self) -> None:
-        WALK_DURATION = 3.0
+        WALK_DURATION = 2.5
         TURN_CORRECTION = 0.0
-        WALK_STANCE_SCALE = 4.5
+        WALK_STANCE_SCALE = 0.0
 
         self._publish_step(0)
         self.stand()
