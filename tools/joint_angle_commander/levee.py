@@ -115,10 +115,20 @@ SQUEEZE_Y = 0.093         # 2026-09-09 : 0.090 juge "ferme trop" sur le robot re
 # complet de calibration de SQUEEZE_Y dans l'ancienne version de ce commentaire, cf. git/backup
 # si besoin -- 0.1405/0.086/0.05 = valeurs simu non transposables telles quelles au reel,
 # 0.095 juge "pas assez serre" le 31/08 SANS rotation de poignet).
-LIFT_Z = 0.391                # 2026-09-09 : suit PINCH_Z (voir --pinch-z ci-dessous), garde
-                              # la meme amplitude de montee de 0.285m : 0.106+0.285=0.391.
-                              # (etait 0.146 avant le podium remesure a 0.8m -- voir historique
-                              # complet dans --pinch-z.)
+LIFT_Z = 0.15                 # 2026-09-09, CORRECTION D'URGENCE : 0.391 (qui gardait la
+                              # meme amplitude de montee 0.285m que l'ancienne geometrie
+                              # bras-vers-le-bas) fait tomber J14_SHOULDER_ROLL_L/
+                              # J19_SHOULDER_ROLL_R hors de leur limite mecanique
+                              # (Guide_PM01_FR.pdf : [-0.6108, 2.3562] rad = [-35, 135]deg --
+                              # 0.391 calcule -49deg, ~14deg au-dela) -- cause confirmee du
+                              # "passe en rouge et s'eteint" en fin de levee (1er essai reel
+                              # avec le podium 0.8m). Avec le bras qui vise desormais AU-DESSUS
+                              # du bassin, il n'a plus la meme course vers le haut : verifie
+                              # (solve_ik + limites du guide, les 5 articulations, approche/
+                              # serrage/levee) que 0.15 reste dans toutes les limites avec
+                              # ~4.6deg de marge sur l'epaule (la plus juste). Levee reelle
+                              # desormais modeste (~4-5cm au-dessus du point de prise), pas
+                              # 28.5cm comme avant -- la geometrie ne permet plus plus.
 APPROACH_DURATION = 5.0      # 2026-09-09 : etait 4.0, ralenti (retour utilisateur "va trop
                               # vite") sur le robot reel avec la nouvelle geometrie.
 SQUEEZE_DURATION = 5.0       # 2026-09-09 : etait 4.0, meme raison.
