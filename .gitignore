@@ -11,5 +11,9 @@
 **/__pycache__/
 *.pyc
 
+# Cache d'analyse du plugin understand-anything
+**/.ua/
+**/.understand-anything/
+
 # Backups dates crees pendant le developpement (git remplace ce role desormais)
 *.bak_*

@@ -53,8 +53,11 @@ def main():
                               "lower_body_balance).")
     parser.add_argument("--dry-run", action="store_true",
                          help="N'envoie rien au robot -- affiche juste ce qui serait fait.")
-    parser.add_argument("--no-confirm", action="store_true",
-                         help="Pas de pause interactive entre phases -- jamais pour un premier essai.")
+    parser.add_argument("--confirm", action="store_true",
+                         help="Pause interactive (Entree) entre chaque phase -- desactivee par "
+                              "defaut depuis l'acceleration du 2026-09-09 (sequence complete "
+                              "deja validee en continu le 2026-09-01). A utiliser pour un "
+                              "premier essai apres un changement de code.")
     args = parser.parse_args()
 
     node = None
@@ -71,7 +74,7 @@ def main():
                         f"repetition {i + 1}/{args.walk_repeat} -- forward={args.forward}m/s "
                         f"duree={args.duration}s. Verifie la distance/l'espace restant avant "
                         f"de continuer.",
-                        not args.no_confirm and not args.dry_run,
+                        args.confirm and not args.dry_run,
                     )
                 ok = walk_mod.marcher(
                     node, args.forward, args.lateral, args.turn, args.duration,
@@ -95,7 +98,7 @@ def main():
             pinch_z=args.pinch_z, pinch_yaw_offset=args.pinch_yaw_offset,
             wrist_rotation_deg=args.wrist_rotation_deg, walk_stance_scale=args.walk_stance_scale,
             skip_motion_state=args.skip_motion_state, only_phase=args.lift_only_phase,
-            dry_run=args.dry_run, no_confirm=args.no_confirm,
+            dry_run=args.dry_run, no_confirm=not args.confirm,
         )
         lever = None
         if not args.dry_run:

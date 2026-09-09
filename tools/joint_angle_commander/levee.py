@@ -361,8 +361,6 @@ def run_lift_sequence(node, lever, args):
         _checkpoint(f"flexion genoux -- scale={walk_stance_scale}, {WALK_STANCE_DURATION}s", confirm)
         _bend_knees(lever, walk_stance_scale, WALK_STANCE_STIFFNESS_SCALE, WALK_STANCE_DURATION,
                     dry_run=args.dry_run)
-        if not args.dry_run:
-            time.sleep(2.0)
 
     if run_approche:
         _checkpoint(
