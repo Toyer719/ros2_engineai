@@ -24,11 +24,12 @@ GOAL_TIMEOUT_S = 300.0
 PROVEN_PINCH_X = 0.35
 PINCH_Y = 0.35
 SQUEEZE_Y = 0.095
-PINCH_Z = 0.126
+PINCH_Z = 0.106
 # 2026-09-09 : jusqu'ici jamais passe explicitement, retombait sur le defaut perime
 # (0.146) de Lift.action/Pivot.action -- garde la meme amplitude de montee que l'ancien
-# PINCH_Z=-0.139 (0.285m), voir meme calcul dans levee.py (robot reel).
-LIFT_Z = 0.411
+# PINCH_Z=-0.139 (0.285m), voir meme calcul dans levee.py (robot reel). PINCH_Z baisse
+# de 0.126 a 0.106 (retour du 1er essai reel : "leve les bras un peu trop"), LIFT_Z suit.
+LIFT_Z = 0.391
 
 WALK_STICK = 0.85
 

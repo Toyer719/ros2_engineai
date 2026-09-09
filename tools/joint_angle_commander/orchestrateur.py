@@ -41,9 +41,10 @@ def main():
     parser.add_argument("--lift-only-phase", choices=["approche", "serrage", "levee"], default=None,
                          help="transmis a levee -- pour valider la levee pas a "
                               "pas apres la marche.")
-    parser.add_argument("--pinch-z", type=float, default=0.126,
-                         help="2026-09-09 : podium remesure a 0.8m -- voir levee.py pour le "
-                              "detail du calcul (etait -0.139, jamais teste avec cette valeur).")
+    parser.add_argument("--pinch-z", type=float, default=0.106,
+                         help="2026-09-09 : podium remesure a 0.8m, ajuste apres 1er essai reel "
+                              "(\"leve les bras un peu trop\" a +0.126) -- voir levee.py pour "
+                              "le detail du calcul.")
     parser.add_argument("--pinch-yaw-offset", type=float, default=0.0)
     parser.add_argument("--wrist-rotation-deg", type=float, default=lift_mod.ELBOW_YAW_ROTATION_DEG,
                          help="Transmis a levee -- pivot de l'avant-bras (deg), 0 pour desactiver.")

@@ -100,7 +100,11 @@ PINCH_X = 0.216           # 2026-08-27 : recalibre pour un placement du robot a 
                            # valider par --only-phase approche avant d'enchainer serrage/levee.
 PINCH_Y = 0.22            # ecart Y avant serrage (demi-largeur carton = 0.0955m) -- aligne sur la
                            # valeur validee en simu le 2026-08-27 (etait 0.28)
-SQUEEZE_Y = 0.090         # 2026-09-03 : retour a la valeur initiale (0.090, prise paume, avant
+SQUEEZE_Y = 0.093         # 2026-09-09 : 0.090 juge "ferme trop" sur le robot reel avec la
+                          # nouvelle geometrie bras-vers-le-haut (meme valeur nominale, mais
+                          # angle de coude different -> compression differente) -- desserre
+                          # legerement (+3mm). A reajuster encore si besoin.
+                          # 2026-09-03 : retour a la valeur initiale (0.090, prise paume, avant
 # tout essai de rotation de poignet) -- essais 0.095 puis 0.105 avec le poignet fige a 90deg
 # toujours juges "trop serre" malgre le desserrage progressif de la position -> la cause n'est
 # probablement PAS SQUEEZE_Y mais la nouvelle geometrie de coude qu'impose le poignet a 90deg
@@ -111,15 +115,14 @@ SQUEEZE_Y = 0.090         # 2026-09-03 : retour a la valeur initiale (0.090, pri
 # complet de calibration de SQUEEZE_Y dans l'ancienne version de ce commentaire, cf. git/backup
 # si besoin -- 0.1405/0.086/0.05 = valeurs simu non transposables telles quelles au reel,
 # 0.095 juge "pas assez serre" le 31/08 SANS rotation de poignet).
-LIFT_Z = 0.411               # 2026-09-09 : etait 0.146 (absolu, pas relatif a PINCH_Z) --
-                              # avec l'ancien PINCH_Z=-0.139 ca faisait une montee de 0.285m.
-                              # Garde la MEME amplitude de montee avec le nouveau
-                              # PINCH_Z=+0.126 : 0.126+0.285=0.411. Sans ce fix, la levee ne
-                              # montait plus que de 2cm (0.126->0.146, quasi un non-mouvement)
-                              # -- trouve via le dry-run avant tout essai reel.
-APPROACH_DURATION = 4.0
-SQUEEZE_DURATION = 4.0
-LIFT_DURATION = 5.0
+LIFT_Z = 0.391                # 2026-09-09 : suit PINCH_Z (voir --pinch-z ci-dessous), garde
+                              # la meme amplitude de montee de 0.285m : 0.106+0.285=0.391.
+                              # (etait 0.146 avant le podium remesure a 0.8m -- voir historique
+                              # complet dans --pinch-z.)
+APPROACH_DURATION = 5.0      # 2026-09-09 : etait 4.0, ralenti (retour utilisateur "va trop
+                              # vite") sur le robot reel avec la nouvelle geometrie.
+SQUEEZE_DURATION = 5.0       # 2026-09-09 : etait 4.0, meme raison.
+LIFT_DURATION = 6.0          # 2026-09-09 : etait 5.0, meme raison.
 HOLD_SECONDS = 0.0          # 2026-09-09 : etait 3.0 (maintien immobile en haut avant
                              # redressement genoux + relachement) -- retire a la demande
                              # de l'utilisateur pour accelerer (perceptible comme "il
@@ -292,15 +295,14 @@ def move_arms(lever, qL0, qL1, qR0, qR1, duration, dry_run=False):
 
 def _build_arg_parser():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--pinch-z", type=float, default=0.126,
-                         help="2026-09-09 : recalibre pour le nouveau podium reel remesure a "
-                              "0.8m de haut (etait 0.535m) -- carton a 0.8+0.146=0.946m "
-                              "(monde), bassin pd_stand ~0.82m -> pinch_z=0.946-0.82=+0.126. "
-                              "ATTENTION : point de prise desormais AU-DESSUS du bassin (etait "
-                              "-0.139, en dessous) -- ~26.5cm d'ecart, bras vise vers le haut, "
-                              "geometrie articulaire jamais testee. PAS ENCORE TESTE sur le "
-                              "robot reel -- valider --dry-run puis --only-phase approche "
-                              "seul avant tout le reste.")
+    parser.add_argument("--pinch-z", type=float, default=0.106,
+                         help="2026-09-09 : podium reel remesure a 0.8m de haut (etait 0.535m) "
+                              "-- calcul d'origine : carton a 0.8+0.146=0.946m (monde), bassin "
+                              "pd_stand ~0.82m -> pinch_z=+0.126. Baisse a +0.106 (essai reel : "
+                              "\"leve les bras un peu trop\" a +0.126) -- LIFT_Z suit ce "
+                              "changement (voir plus haut). Point de prise reste AU-DESSUS du "
+                              "bassin (etait -0.139, en dessous, avant le podium remesure) -- "
+                              "geometrie bras-vers-le-haut, a reajuster encore si besoin.")
     parser.add_argument("--pinch-yaw-offset", type=float, default=0.0,
                          help="Radians -- corrige la cible si le robot ne s'arrete pas "
                               "exactement de face au carton.")
