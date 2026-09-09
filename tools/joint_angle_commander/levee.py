@@ -287,11 +287,15 @@ def move_arms(lever, qL0, qL1, qR0, qR1, duration, dry_run=False):
 
 def _build_arg_parser():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--pinch-z", type=float, default=-0.139,
-                         help="2026-08-26 : recalibre pour le nouveau podium reel (53.5cm de "
-                              "haut, contre la table 72cm d'avant) -- carton a 0.535+0.146="
-                              "0.681m (monde), bassin pd_stand ~0.82m -> pinch_z=0.681-0.82="
-                              "-0.139. PAS ENCORE TESTE sur le robot reel avec ce podium.")
+    parser.add_argument("--pinch-z", type=float, default=0.126,
+                         help="2026-09-09 : recalibre pour le nouveau podium reel remesure a "
+                              "0.8m de haut (etait 0.535m) -- carton a 0.8+0.146=0.946m "
+                              "(monde), bassin pd_stand ~0.82m -> pinch_z=0.946-0.82=+0.126. "
+                              "ATTENTION : point de prise desormais AU-DESSUS du bassin (etait "
+                              "-0.139, en dessous) -- ~26.5cm d'ecart, bras vise vers le haut, "
+                              "geometrie articulaire jamais testee. PAS ENCORE TESTE sur le "
+                              "robot reel -- valider --dry-run puis --only-phase approche "
+                              "seul avant tout le reste.")
     parser.add_argument("--pinch-yaw-offset", type=float, default=0.0,
                          help="Radians -- corrige la cible si le robot ne s'arrete pas "
                               "exactement de face au carton.")
