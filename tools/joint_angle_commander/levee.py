@@ -154,10 +154,13 @@ MOTION_STATE_TIMEOUT = 3.0
 # question du contact avant-bras tranchee (comparer avec/sans rotation, meme SQUEEZE_Y).
 ELBOW_YAW_ROTATION_DEG = 0.0
 
-# 2026-09-03 : flexion des genoux pour stabiliser la levee -- voir docstring module.
-# Echelle DELIBEREMENT prudente pour un 1er essai reel (1.0 = posture mesuree telle quelle,
-# contre 4.5 utilise en simu -- augmenter progressivement via --walk-stance-scale).
-WALK_STANCE_SCALE = 1.0
+# 2026-09-09 : DESACTIVEE (etait 1.0) -- en simu, la combinaison genoux flechis +
+# nouveau mouvement de bras (podium remesure a 0.8m, bras vise vers le haut) fait
+# tomber le robot (chute confirmee par telemetrie PENDANT l'approche, pas la levee --
+# z stable tout du long de la flexion+pause, s'effondre des que le bras bouge). Jamais
+# reteste sur le robot reel depuis ce changement de geometrie -- desactivee par
+# precaution en attendant. Remettre a une valeur >0 seulement apres validation.
+WALK_STANCE_SCALE = 0.0
 WALK_STANCE_STIFFNESS_SCALE = 1.8
 WALK_STANCE_DURATION = 3.0
 
