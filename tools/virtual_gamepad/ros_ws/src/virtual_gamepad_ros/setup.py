@@ -29,6 +29,7 @@ setup(
             'lift = virtual_gamepad_ros.lift:main',
             'pivot = virtual_gamepad_ros.pivot:main',
             'depose = virtual_gamepad_ros.depose:main',
+            'body_vel_bridge = virtual_gamepad_ros.body_vel_bridge:main',
         ],
     },
 )

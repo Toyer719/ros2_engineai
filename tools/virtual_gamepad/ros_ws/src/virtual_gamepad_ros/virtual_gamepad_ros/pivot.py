@@ -22,7 +22,14 @@ LEFT_JOINT_INDICES = [13, 14, 15, 16, 17]
 RIGHT_JOINT_INDICES = [18, 19, 20, 21, 22]
 WAIST_JOINT_INDEX = 12
 WAIST_KP_HOLD, WAIST_KD_HOLD = 500.0, 10.0
-WAIST_KP_RELEASE, WAIST_KD_RELEASE = 150.0, 3.0
+# 2026-09-10 : 150/3.0 (valeur reelle) suffisait a eviter la chute quand la
+# marche precedente passait par l'ancienne emulation manette directe, mais
+# pas quand walk_to passe par /motion/body_vel_cmd + body_vel_bridge (meme
+# distance finale mesuree, x~1.29m dans les deux cas, mais chute reproduite
+# au meme instant -- relachement du pivot -- avec ce chemin de marche,
+# posture/elan residuel apparemment different). Durci encore pour absorber
+# cette marge plus fine.
+WAIST_KP_RELEASE, WAIST_KD_RELEASE = 80.0, 2.0
 LEG_INDICES = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
 
 Q_LEFT_HOME = np.array([0.000879, 0.075284, -0.000233, -0.126397, -0.000033])

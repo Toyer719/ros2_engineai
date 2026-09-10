@@ -41,14 +41,18 @@ SQUEEZE_Y = 0.095
 PINCH_Z = 0.106
 LIFT_Z = 0.20
 
-# 2026-09-09 : essai walk_to en mode --real (BodyVelCmd) abandonne -- le
-# noeud ROS2 qui gererait /motion/body_vel_cmd et /motion/motion_state cote
-# reel (locomotion_interface_node) n'existe pas du tout en simulation
-# (absent de `ros2 node list`, absent du SDK). La marche en sim passe par
-# l'emulation manette LCM (motion_task_manager interne pilote par
-# virtual_gamepad_input_adapter, mecanisme different et non concerne).
-# Retour a l'echelle stick normale.
-WALK_STICK = 0.85
+# 2026-09-09 : premier essai walk_to en mode --real (BodyVelCmd) abandonne --
+# le noeud ROS2 qui gererait /motion/body_vel_cmd et /motion/motion_state
+# cote reel (locomotion_interface_node) n'existe pas en simulation (absent
+# de `ros2 node list`, absent du SDK). Repris le 2026-09-10 : walk_to.py
+# n'a plus qu'une seule logique (toujours BodyVelCmd), un node-pont sim
+# uniquement (body_vel_bridge.py) traduit vers l'emulation manette LCM que
+# MuJoCo comprend deja. WALK_FORWARD_MPS=0.45 est la valeur REELLE deja
+# prouvee (marche.py::DEFAULT_FORWARD_MPS), c'est le SEUL point ou la
+# calibration vitesse->stick du bridge est fidele (voir sa docstring --
+# pas physiquement lineaire sur toute la plage) : ne pas changer cette
+# valeur sans reverifier en sim par telemetrie.
+WALK_FORWARD_MPS = 0.45
 
 
 class ChefNode(Node):
@@ -152,7 +156,7 @@ class ChefNode(Node):
         self.stand()
 
         self._publish_step(10)
-        if not self.walk_to(forward=WALK_STICK, turn=TURN_CORRECTION, duration=WALK_DURATION):
+        if not self.walk_to(forward=WALK_FORWARD_MPS, turn=TURN_CORRECTION, duration=WALK_DURATION):
             self.get_logger().error("run_sequence : walk_to(Posage 1) a echoue -- arret.")
             return
         time.sleep(2.0)

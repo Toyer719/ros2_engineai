@@ -37,7 +37,12 @@ participant dans le temps reduit la contention au moment critique.
 RESTE A LANCER A PART (2 binaires C++, pas des nodes ROS Python) AVANT ce
 launch file, voir docs/COMMENT_LANCER_VIRTUAL_GAMEPAD_ROS.txt :
   ./scripts/run_mujoco.sh pm01_edu_carton   (physique)
-  ./run.sh pm01_edu_carton                  (machine a etats / arbitre)"""
+  ./run.sh pm01_edu_carton                  (machine a etats / arbitre)
+
+2026-09-10 : ajoute `body_vel_bridge` -- walk_to.py n'a plus qu'une seule
+logique (toujours /motion/body_vel_cmd), ce node traduit vers l'emulation
+manette LCM que MuJoCo comprend en sim (SIM UNIQUEMENT, absent du lancement
+reel -- voir docstring de body_vel_bridge.py)."""
 
 from launch import LaunchDescription
 from launch_ros.actions import Node
@@ -55,6 +60,7 @@ def generate_launch_description():
         Node(package='virtual_gamepad_ros', executable='lift', name='lift', output='screen'),
         Node(package='virtual_gamepad_ros', executable='pivot', name='pivot', output='screen'),
         Node(package='virtual_gamepad_ros', executable='depose', name='depose', output='screen'),
+        Node(package='virtual_gamepad_ros', executable='body_vel_bridge', name='body_vel_bridge', output='screen'),
         TimerAction(period=VISION_START_DELAY_S, actions=[
             ExecuteProcess(
                 cmd=['nice', '-n', '15', 'python3', 'pelvis_camera_sim.py'],

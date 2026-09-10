@@ -1,125 +1,58 @@
-"""ActionServer "walk_to". Deux modes, choisis au demarrage (`--real` sur la ligne de
-commande, cf. main()) :
+"""ActionServer "walk_to" -- UNE SEULE logique, `/motion/body_vel_cmd` (BodyVelCmd),
+meme mecanisme QUE tools/joint_angle_commander/marche.py (bascule rl_terrain ->
+publie vitesse -> vitesse zero -> retour lower_body_balance) -- confirme sur le
+robot reel le 2026-08-27/28. `forward`/`turn` sont des m/s et rad/s REELS.
 
-- SIM (defaut, inchange) : emulation manette LCM (LB+B puis sticks sur les topics
-  /virtual_gamepad/cmd/*, agreges par chef_node.py) -- `forward`/`turn` a l'echelle
-  stick -1..1.
-- REEL (`--real`) : /motion/body_vel_cmd (BodyVelCmd), meme mecanisme QUE
-  tools/joint_angle_commander/marche.py (bascule rl_terrain -> publie vitesse -> vitesse
-  zero -> retour lower_body_balance) -- confirme sur le robot reel le 2026-08-27/28,
-  REMPLACE l'emulation LCM ci-dessus qui est refusee par l'arbitre de commande cote reel
-  (barriere de securite volontaire, voir memoire projet). `forward`/`turn` deviennent des
-  m/s et rad/s REELS, PAS l'echelle stick du mode sim -- chef_node.py calibre
-  actuellement pour le mode sim (WALK_STICK, STICK_TO_MPS...), ces valeurs NE
-  TRANSPOSENT PAS telles quelles au reel (cf. marche.py::DEFAULT_FORWARD_MPS=0.45,
-  calibration separee et deja empirique). JAMAIS TESTE sur le robot reel via ce fichier
-  -- valider comme marche.py (distance/duree tres faible, --no-confirm jamais en premier
-  essai, quelqu'un pret a couper) avant tout usage.
+2026-09-10 : ancien mode sim (emulation manette LCM directe, sans passer par
+/motion/body_vel_cmd) SUPPRIME -- le sim/reel etait la seule branche de ce
+fichier qui differait, et elle est remplacee par un node externe,
+`body_vel_bridge.py`, lance UNIQUEMENT dans les launch files sim (jamais sur
+le robot reel) : il traduit /motion/body_vel_cmd + /motion/set_motion_state en
+l'emulation manette que MuJoCo comprend. Ce fichier n'a donc plus besoin de
+savoir s'il tourne en sim ou sur le robot reel -- meme code, meme protocole,
+seul ce qui ecoute de l'autre cote du topic change. Calibration vitesse->stick
+du bridge PAS physiquement lineaire sur toute la plage (voir sa docstring) :
+seul le point forward=0.45m/s (calibre reel, marche.py::DEFAULT_FORWARD_MPS)
+est fidele en sim, chef_node.py n'utilise que celui-la.
 
-Le mode reel a besoin, EN PLUS du setup.bash de ce ros_ws, de l'overlay SDK
-(`build/ros2_env/install/local_setup.bash`, meme prerequis que lift.py -- import
-interface_protocol.msg.BodyVelCmd/MotionState*) et de motion_state switching -- NE PEUT
-PAS reutiliser tools/joint_angle_commander/motion_state.py::ensure_motion_state() tel
-quel : cette fonction appelle rclpy.spin_once(node, ...) en interne, correct pour un
-script standalone (marche.py) mais dangereux ici -- ce node tourne deja sous un
-MultiThreadedExecutor (voir main()) qui spin le MEME node dans un thread separe pendant
-l'execution du goal ; spin_once() en plus, depuis le thread d'execution du goal,
-créerait une ressource concurrente sur le node (meme categorie de race C que celle deja
-documentee dans chef_node.py::main()). La bascule d'etat est donc reimplementee ci-dessous
-(_switch_motion_state) : sub/pub crees UNE FOIS dans _init_real(), le callback (delivre
-par l'executor, thread separe) met juste a jour self._motion_state, et l'attente se fait
-par time.sleep() pur, jamais spin_once().
+A besoin, EN PLUS du setup.bash de ce ros_ws, de l'overlay SDK
+(`build/ros2_env/install/local_setup.bash`, meme prerequis que lift.py --
+import interface_protocol.msg.BodyVelCmd/MotionState*) et de motion_state
+switching -- NE PEUT PAS reutiliser tools/joint_angle_commander/motion_state.py
+::ensure_motion_state() tel quel : cette fonction appelle rclpy.spin_once(node,
+...) en interne, correct pour un script standalone (marche.py) mais dangereux
+ici -- ce node tourne deja sous un MultiThreadedExecutor (voir main()) qui
+spin le MEME node dans un thread separe pendant l'execution du goal ;
+spin_once() en plus, depuis le thread d'execution du goal, créerait une
+ressource concurrente sur le node (meme categorie de race C que celle deja
+documentee dans chef_node.py::main()). La bascule d'etat est donc
+reimplementee ci-dessous (_switch_motion_state) : sub/pub crees UNE FOIS dans
+__init__, le callback (delivre par l'executor, thread separe) met juste a
+jour self._motion_state, et l'attente se fait par time.sleep() pur, jamais
+spin_once().
 """
 import signal
-import sys
 import time
 
 import rclpy
 from rclpy.action import ActionServer, CancelResponse
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
-from std_msgs.msg import Bool, Float32
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 
 from virtual_gamepad_interfaces.action import WalkTo
-from virtual_gamepad_ros.field_topics import field_topic
 
-REAL_WALK_MOTION_STATE = "rl_terrain"
-REAL_RATE_HZ = 100.0
-REAL_ZERO_PUBLISH_CYCLES = 10
-REAL_MOTION_STATE_TIMEOUT = 3.0
-REAL_MOTION_STATE_DETOUR = "pd_stand"
+WALK_MOTION_STATE = "rl_terrain"
+RATE_HZ = 100.0
+ZERO_PUBLISH_CYCLES = 10
+MOTION_STATE_TIMEOUT = 3.0
+MOTION_STATE_DETOUR = "pd_stand"
 
 
 class WalkToActionServer(Node):
-    def __init__(self, real: bool = False):
+    def __init__(self):
         super().__init__("walk_to")
-        self._real = real
-
-        self._lb_pub = self.create_publisher(Bool, field_topic("LB"), 10)
-        self._b_pub = self.create_publisher(Bool, field_topic("B"), 10)
-        self._left_x_pub = self.create_publisher(Float32, field_topic("LEFT_STICK_X"), 10)
-        self._right_y_pub = self.create_publisher(Float32, field_topic("RIGHT_STICK_Y"), 10)
-
-        if self._real:
-            self._init_real()
-
-        self._server = ActionServer(
-            self, WalkTo, "walk_to", self._execute, cancel_callback=self._on_cancel,
-        )
-
-    def _on_cancel(self, goal_handle):
-        return CancelResponse.ACCEPT
-
-    def _execute(self, goal_handle):
-        forward = goal_handle.request.forward
-        turn = goal_handle.request.turn
-        duration = goal_handle.request.duration
-        if self._real:
-            return self._execute_real(goal_handle, forward, turn, duration)
-        return self._execute_sim(goal_handle, forward, turn, duration)
-
-
-    def _push_sticks(self, forward: float, turn: float) -> None:
-        self._left_x_pub.publish(Float32(data=float(forward)))
-        self._right_y_pub.publish(Float32(data=float(-turn)))
-
-    def _enter_walk(self, combo_hold_seconds=0.5, walk_settle_seconds=1.5) -> None:
-        self.get_logger().info("Passage en walk...")
-        self._lb_pub.publish(Bool(data=True))
-        self._b_pub.publish(Bool(data=True))
-        time.sleep(combo_hold_seconds)
-        self._lb_pub.publish(Bool(data=False))
-        self._b_pub.publish(Bool(data=False))
-        time.sleep(walk_settle_seconds)
-        self.get_logger().info("walk actif.")
-
-    def _execute_sim(self, goal_handle, forward, turn, duration):
-        result = WalkTo.Result()
-        self._enter_walk()
-
-        self.get_logger().info(f"walk_to (sim) : forward={forward} turn={turn} duration={duration}s")
-        self._push_sticks(forward, turn)
-
-        elapsed = 0.0
-        step = 0.1
-        while elapsed < duration:
-            if goal_handle.is_cancel_requested:
-                self._push_sticks(0.0, 0.0)
-                goal_handle.canceled()
-                result.success = False
-                return result
-            time.sleep(step)
-            elapsed += step
-
-        self._push_sticks(0.0, 0.0)
-        goal_handle.succeed()
-        result.success = True
-        return result
-
-
-    def _init_real(self):
         from interface_protocol.msg import BodyVelCmd, MotionState, MotionStateRequest
-        from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 
         self._BodyVelCmd = BodyVelCmd
         self._MotionStateRequest = MotionStateRequest
@@ -136,13 +69,12 @@ class WalkToActionServer(Node):
         self._motion_state_pub = self.create_publisher(MotionStateRequest, "/motion/set_motion_state", request_qos)
         self._vel_pub = self.create_publisher(BodyVelCmd, "/motion/body_vel_cmd", vel_qos)
 
-        self.get_logger().warn(
-            "walk_to demarre en mode REEL (/motion/body_vel_cmd) -- forward/turn sont des "
-            "m/s et rad/s reels, PAS l'echelle stick -1..1 du mode sim. JAMAIS teste sur le "
-            "robot reel via ce fichier -- recalibrer forward comme marche.py "
-            "(0.12m/s confirme trop faible, 0.45m/s confirme fonctionnel) avant tout essai, "
-            "en commencant par une duree tres courte."
+        self._server = ActionServer(
+            self, WalkTo, "walk_to", self._execute, cancel_callback=self._on_cancel,
         )
+
+    def _on_cancel(self, goal_handle):
+        return CancelResponse.ACCEPT
 
     def _on_motion_state(self, msg) -> None:
         self._motion_state["current"] = msg.current_motion_task
@@ -171,33 +103,34 @@ class WalkToActionServer(Node):
             time.sleep(0.05)
         return False
 
-    def _ensure_motion_state(self, target: str, timeout: float = REAL_MOTION_STATE_TIMEOUT) -> bool:
-        """Meme logique que motion_state.py::ensure_motion_state() (detour automatique
-        par REAL_MOTION_STATE_DETOUR si target n'est pas atteignable directement) --
-        voir docstring module pour pourquoi c'est reimplemente ici plutot que reutilise
-        tel quel."""
+    def _ensure_motion_state(self, target: str, timeout: float = MOTION_STATE_TIMEOUT) -> bool:
+        """Detour automatique par MOTION_STATE_DETOUR si target n'est pas atteignable
+        directement -- meme logique que tools/joint_angle_commander/motion_state.py
+        ::ensure_motion_state(), voir docstring module pour pourquoi c'est
+        reimplemente ici plutot que reutilise tel quel."""
         self._wait_for_motion_state()
         if self._motion_state["current"] == target:
             return True
         if (target not in self._motion_state["available"]
-                and REAL_MOTION_STATE_DETOUR in self._motion_state["available"]):
-            if not self._switch_motion_state(REAL_MOTION_STATE_DETOUR, timeout):
+                and MOTION_STATE_DETOUR in self._motion_state["available"]):
+            if not self._switch_motion_state(MOTION_STATE_DETOUR, timeout):
                 return False
         return self._switch_motion_state(target, timeout)
 
-    def _execute_real(self, goal_handle, forward, turn, duration):
+    def _execute(self, goal_handle):
+        forward = goal_handle.request.forward
+        turn = goal_handle.request.turn
+        duration = goal_handle.request.duration
         result = WalkTo.Result()
 
-        if not self._ensure_motion_state(REAL_WALK_MOTION_STATE):
-            self.get_logger().error(f"walk_to (reel) : impossible de passer en {REAL_WALK_MOTION_STATE}.")
+        if not self._ensure_motion_state(WALK_MOTION_STATE):
+            self.get_logger().error(f"walk_to : impossible de passer en {WALK_MOTION_STATE}.")
             goal_handle.abort()
             result.success = False
             return result
 
-        self.get_logger().info(
-            f"walk_to (reel) : forward={forward}m/s turn={turn}rad/s duration={duration}s"
-        )
-        period = 1.0 / REAL_RATE_HZ
+        self.get_logger().info(f"walk_to : forward={forward}m/s turn={turn}rad/s duration={duration}s")
+        period = 1.0 / RATE_HZ
         elapsed = 0.0
         cancelled = False
         while elapsed < duration:
@@ -213,7 +146,7 @@ class WalkToActionServer(Node):
             time.sleep(period)
             elapsed += period
 
-        for _ in range(REAL_ZERO_PUBLISH_CYCLES):
+        for _ in range(ZERO_PUBLISH_CYCLES):
             msg = self._BodyVelCmd()
             msg.linear_velocity = [0.0, 0.0]
             msg.yaw_velocity = 0.0
@@ -221,7 +154,7 @@ class WalkToActionServer(Node):
             time.sleep(period)
 
         if not self._ensure_motion_state("lower_body_balance"):
-            self.get_logger().error("walk_to (reel) : impossible de repasser en lower_body_balance.")
+            self.get_logger().error("walk_to : impossible de repasser en lower_body_balance.")
             goal_handle.abort()
             result.success = False
             return result
@@ -237,10 +170,8 @@ class WalkToActionServer(Node):
 
 
 def main():
-    real = "--real" in sys.argv
-
     rclpy.init()
-    node = WalkToActionServer(real=real)
+    node = WalkToActionServer()
     executor = MultiThreadedExecutor()
     executor.add_node(node)
     try:
