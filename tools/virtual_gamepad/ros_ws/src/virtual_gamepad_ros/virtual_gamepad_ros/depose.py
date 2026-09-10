@@ -20,6 +20,8 @@ from virtual_gamepad_interfaces.action import Depose
 
 LEFT_JOINT_INDICES = [13, 14, 15, 16, 17]
 RIGHT_JOINT_INDICES = [18, 19, 20, 21, 22]
+WAIST_JOINT_INDEX = 12
+WAIST_HOLD_KP, WAIST_HOLD_KD = 80.0, 2.0
 
 Q_LEFT_HOME = np.array([0.000879, 0.075284, -0.000233, -0.126397, -0.000033])
 Q_RIGHT_HOME = np.array([0.000885, -0.075161, 0.000241, -0.126390, 0.000033])
@@ -70,18 +72,31 @@ class DeposeActionServer(Node):
             self._lever = Lever(self, subscriber_timeout=10.0)
         return self._lever
 
-    def _bend_knees(self, lever, scale, stiffness_scale, duration, rate_hz=30):
+    def _bend_knees(self, lever, scale, stiffness_scale, duration, qL_hold, qR_hold, rate_hz=30):
         """Identique a lift.py::_bend_knees -- refait ICI car walk_to (entre
         pivot et ce node) a rendu les jambes a pd_stand (jambes DROITES) le
         temps de la marche vers le 2e poste -- il faut refaire la flexion
         avant de bouger les bras, sinon meme risque de bascule que sans
-        flexion du tout (cf memoire projet)."""
+        flexion du tout (cf memoire projet).
+
+        2026-09-10 : republie aussi bras+buste (qL_hold/qR_hold, deja tenus
+        par pivot.py juste avant) A CHAQUE tick, pas seulement les jambes --
+        /motion/joint_override_command est un REMPLACEMENT COMPLET a chaque
+        message (pas une fusion, cf pivot.py), et ce node cree son PROPRE
+        Lever (processus separe de celui de pivot.py) : sans ca, le tout
+        premier message de ce node (jambes seules) aurait fait lacher le
+        carton instantanement, avant meme que ce fichier ne recalcule la
+        position des bras plus bas -- meme piege que celui deja corrige
+        dans pivot.py, jamais teste en conditions reelles jusqu'ici (le seul
+        test de depose.py documente etait isole, avec sa propre prise
+        fraiche, pas un relais depuis pivot.py)."""
         for idx, kp, kd in [
             (LEFT_HIP_PITCH_INDEX, 200.0, 5.0), (RIGHT_HIP_PITCH_INDEX, 200.0, 5.0),
             (LEFT_KNEE_PITCH_INDEX, 450.0, 5.0), (RIGHT_KNEE_PITCH_INDEX, 450.0, 5.0),
             (LEFT_ANKLE_PITCH_INDEX, 400.0, 2.0), (RIGHT_ANKLE_PITCH_INDEX, 400.0, 2.0),
         ]:
             lever.set_gains(idx, kp * stiffness_scale, kd * stiffness_scale)
+        lever.set_gains(WAIST_JOINT_INDEX, WAIST_HOLD_KP, WAIST_HOLD_KD)
         n = max(1, int(duration * rate_hz))
         for i in range(n + 1):
             a = _quintic_ease(i / n)
@@ -91,6 +106,11 @@ class DeposeActionServer(Node):
             lever[RIGHT_KNEE_PITCH_INDEX] = float(a * scale * WALK_STANCE_KNEE_R)
             lever[LEFT_ANKLE_PITCH_INDEX] = float(a * scale * WALK_STANCE_ANKLE_PITCH_L)
             lever[RIGHT_ANKLE_PITCH_INDEX] = float(a * scale * WALK_STANCE_ANKLE_PITCH_R)
+            for idx, angle in zip(LEFT_JOINT_INDICES, qL_hold):
+                lever[idx] = float(angle)
+            for idx, angle in zip(RIGHT_JOINT_INDICES, qR_hold):
+                lever[idx] = float(angle)
+            lever[WAIST_JOINT_INDEX] = 0.0
             time.sleep(1.0 / rate_hz)
 
     def _move_arms(self, lever, qL0, qL1, qR0, qR1, duration, rate_hz=30):
@@ -131,36 +151,36 @@ class DeposeActionServer(Node):
             result.success = False
             return result
 
+        # 2026-09-10 : calcule la pose DEJA TENUE (bras au carton, hauteur
+        # g.hold_z -- suppose que le pinch_x/squeeze_y/hold_z passes ici
+        # correspondent exactement a ce que pivot.py tenait juste avant,
+        # sinon saut de position des le premier message, cf Depose.action)
+        # AVANT la flexion des genoux, pour pouvoir la republier pendant
+        # celle-ci (voir docstring de _bend_knees).
+        hold_L = _rotate_xy([g.pinch_x, g.squeeze_y, g.hold_z], g.pinch_yaw_offset)
+        hold_R = _rotate_xy([g.pinch_x, -g.squeeze_y, g.hold_z], g.pinch_yaw_offset)
+        qL_hold = solve_ik(LEFT_CHAIN, HAND_OFFSET_LEFT, hold_L, Q_LEFT_HOME)
+        qR_hold = solve_ik(RIGHT_CHAIN, HAND_OFFSET_RIGHT, hold_R, Q_RIGHT_HOME)
+
         if g.walk_stance:
             self.get_logger().info(
                 f"posture jambes -- droites (pd_stand, rendues pendant la marche) -> "
-                f"flechies x{g.walk_stance_scale:.1f}, {g.walk_stance_duration:.1f}s"
+                f"flechies x{g.walk_stance_scale:.1f}, {g.walk_stance_duration:.1f}s "
+                "(bras/buste republies en continu pour ne pas lacher le carton)"
             )
             self._bend_knees(lever, g.walk_stance_scale, g.walk_stance_stiffness_scale,
-                              g.walk_stance_duration)
+                              g.walk_stance_duration, qL_hold, qR_hold)
 
-        pinch_L = _rotate_xy([g.pinch_x, g.pinch_y, g.pinch_z], g.pinch_yaw_offset)
-        pinch_R = _rotate_xy([g.pinch_x, -g.pinch_y, g.pinch_z], g.pinch_yaw_offset)
-        q_squeeze_L = solve_ik(LEFT_CHAIN, HAND_OFFSET_LEFT, pinch_L, Q_LEFT_HOME)
-        q_squeeze_R = solve_ik(RIGHT_CHAIN, HAND_OFFSET_RIGHT, pinch_R, Q_RIGHT_HOME)
-        squeeze_L = _rotate_xy([g.pinch_x, g.squeeze_y, g.pinch_z], g.pinch_yaw_offset)
-        squeeze_R = _rotate_xy([g.pinch_x, -g.squeeze_y, g.pinch_z], g.pinch_yaw_offset)
-        q_squeeze_L = solve_ik(LEFT_CHAIN, HAND_OFFSET_LEFT, squeeze_L, q_squeeze_L)
-        q_squeeze_R = solve_ik(RIGHT_CHAIN, HAND_OFFSET_RIGHT, squeeze_R, q_squeeze_R)
-        n_replay = max(1, int(3.0 * 30))
-        for i in range(n_replay + 1):
-            a = ease(i / n_replay)
-            z = g.pinch_z + a * (g.hold_z - g.pinch_z)
-            q_squeeze_L = solve_ik(LEFT_CHAIN, HAND_OFFSET_LEFT,
-                                    _rotate_xy([g.pinch_x, g.squeeze_y, z], g.pinch_yaw_offset),
-                                    q_squeeze_L, iters=30)
-            q_squeeze_R = solve_ik(RIGHT_CHAIN, HAND_OFFSET_RIGHT,
-                                    _rotate_xy([g.pinch_x, -g.squeeze_y, z], g.pinch_yaw_offset),
-                                    q_squeeze_R, iters=30)
+        # q_squeeze_L/R = qL_hold/qR_hold, deja calcules a la hauteur reellement
+        # tenue (g.hold_z) et deja republies en continu pendant _bend_knees
+        # ci-dessus (si walk_stance) -- republie ici une derniere fois pour
+        # couvrir le cas walk_stance=false (jamais publie sinon).
+        q_squeeze_L, q_squeeze_R = qL_hold, qR_hold
         for idx, angle in zip(LEFT_JOINT_INDICES, q_squeeze_L):
             lever[idx] = float(angle)
         for idx, angle in zip(RIGHT_JOINT_INDICES, q_squeeze_R):
             lever[idx] = float(angle)
+        lever[WAIST_JOINT_INDEX] = 0.0
 
         self.get_logger().info(
             f"depose -- Z {g.hold_z:.3f} -> {g.drop_z:.3f} ({g.depose_duration:.1f}s) "

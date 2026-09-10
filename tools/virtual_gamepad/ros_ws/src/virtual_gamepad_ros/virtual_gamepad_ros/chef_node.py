@@ -34,9 +34,27 @@ GOAL_TIMEOUT_S = 300.0
 # numeriquement (solve_ik, chaine complete approche->serrage->levee, les 5
 # articulations du bras, pas juste le roll) : PINCH_X=0.34/PINCH_Y=0.45 donne
 # marge=+14.6deg (levee) contre +3.95deg avant, tout en portant 8cm plus loin.
-# PAS ENCORE TESTE en simu (calcul IK seul, physique MuJoCo non verifiee).
-PROVEN_PINCH_X = 0.34
-PINCH_Y = 0.45
+# Teste en simu (2026-09-10, sequence complete stable, cf commits) -- carton
+# saisi mais pas assez profondement selon retour utilisateur (prise pres du
+# bord, pas assez engagee). Essai PINCH_X=0.38 : marge shoulder-roll excellente
+# (+49.3deg) mais bascule l'IK sur une branche coude/epaule TORDUE (epaule
+# -111.9deg, coude +68.3deg) -- confirme visuellement par l'utilisateur
+# ("flexion des coudes bizarre"). Viser plus bas sur le carton (pinch_z
+# negatif) retrouve une posture naturelle a ce PINCH_X, mais l'utilisateur
+# a rejete cette option ("trop bas") -- il veut rester au CENTRE du carton
+# (PINCH_Z=0.106 inchange) et gagner en profondeur uniquement via
+# PINCH_X/PINCH_Y. Balayage complet a PINCH_Z=0.106 fixe (meme methode,
+# chaine complete approche->serrage->levee) : la posture naturelle ET une
+# marge positive ne survivent que jusqu'a ~0.345-0.35 -- au-dela (0.355+),
+# soit la marge shoulder-roll devient negative (viole la limite), soit l'IK
+# bascule sur la meme branche tordue que 0.38. PINCH_X=0.345/PINCH_Y=0.50
+# retenu : posture naturelle (epaule -38.4deg, coude -72.5deg, tres proche
+# de l'ancien 0.34/0.45), marge=+22.5deg (MEILLEURE que l'ancien 0.34/0.45,
+# +14.7deg) -- gain de profondeur modeste (+0.5cm) mais c'est le maximum
+# atteignable a cette hauteur sans re-tomber sur la branche tordue ou violer
+# la limite. PAS ENCORE TESTE en simu physique.
+PROVEN_PINCH_X = 0.345
+PINCH_Y = 0.50
 SQUEEZE_Y = 0.095
 PINCH_Z = 0.106
 LIFT_Z = 0.20
@@ -204,9 +222,53 @@ class ChefNode(Node):
         # dans la plage et bloque quand meme -- deuxieme restriction non
         # identifiee (probablement l'arbitre de securite), pas creusee plus
         # loin. 45deg retenu comme valeur fiable pour la tache.
+        # 2026-09-10 : free_legs_for_walk=True essaye puis ABANDONNE apres
+        # nouvelle chute confirmee par telemetrie -- meme signature EXACTE
+        # que celle deja documentee le 08/09 (z 0.82->0.97 (pic) ->0.12 en
+        # moins d'1s, ~0.2s apres que pivot() ait rendu les jambes a la
+        # marche RL). Ni le fix de gain de pivot ni le pont body_vel_cmd
+        # d'aujourd'hui n'ont d'effet ici -- ce n'est pas le meme mecanisme
+        # (celui-ci se produit AU MOMENT du handoff jambes lui-meme, avant
+        # meme que walk_to() ne commence a marcher). Reste un probleme
+        # ouvert, non resolu aujourd'hui. **Approche alternative retenue :**
+        # ne plus jamais combiner "marche" et "objet tenu" -- depose() le
+        # carton SUR PLACE juste apres le pivot (release_after=False,
+        # free_legs_for_walk=False -- carton toujours tenu, jambes PAS
+        # rendues a la marche), PUIS un stand() complet (plus rien tenu),
+        # PUIS une marche a vide (deja prouvee sure) vers un 2e point.
         if not self.pivot(pinch_x=pinch_x, pinch_y=PINCH_Y, pinch_z=PINCH_Z, squeeze_y=SQUEEZE_Y,
-                           lift_z=LIFT_Z, angle_deg=45.0, walk_stance_scale=WALK_STANCE_SCALE):
+                           lift_z=LIFT_Z, angle_deg=45.0, walk_stance_scale=WALK_STANCE_SCALE,
+                           release_after=False, free_legs_for_walk=False):
             self.get_logger().error("run_sequence : pivot(45) a echoue -- arret.")
+            return
+
+        # depose() SUR PLACE (pas de marche entre pivot et depose -- evite le
+        # handoff jambes instable). pinch_z/hold_z = LIFT_Z (PAS les defauts
+        # perimes de Depose.action) : c'est la hauteur ou pivot() tenait
+        # reellement le carton, un ecart ferait sauter les bras au premier
+        # message de depose() (meme piege que celui deja corrige dans
+        # depose.py). drop_z = PINCH_Z (hauteur de prise reelle actuelle, pas
+        # le defaut perime de Depose.action non plus). walk_stance=true
+        # (defaut) volontairement garde : re-flechit les genoux (deja
+        # droits, WALK_STANCE_SCALE=0.0 pendant lift/pivot) avant de
+        # manipuler la charge -- meme pattern deja prouve stable partout
+        # ailleurs (lift.py), plutot que la combinaison jambes droites
+        # statiques + charge qui descend, jamais testee.
+        self._publish_step(80)
+        if not self.depose(pinch_x=pinch_x, pinch_y=PINCH_Y, pinch_z=LIFT_Z, squeeze_y=SQUEEZE_Y,
+                            hold_z=LIFT_Z, drop_z=PINCH_Z):
+            self.get_logger().error("run_sequence : depose() a echoue -- arret.")
+            return
+
+        self.stand(settle_seconds=3.0)
+
+        # Marche a vide (rien tenu) vers un 2e point -- deja prouvee sure de
+        # nombreuses fois aujourd'hui, sert juste a montrer que le robot
+        # peut encore se deplacer apres la tache, sans reproduire le
+        # handoff instable.
+        self._publish_step(90)
+        if not self.walk_to(forward=WALK_FORWARD_MPS, turn=0.0, duration=1.5):
+            self.get_logger().error("run_sequence : walk_to(depart) a echoue -- arret.")
             return
 
         self.stand(settle_seconds=3.0)
