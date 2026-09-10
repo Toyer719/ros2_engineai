@@ -21,25 +21,33 @@ CHANNEL = "virtual_gamepad/gamepad_keys"
 SERVER_TIMEOUT_S = 10.0
 GOAL_TIMEOUT_S = 300.0
 
-# 2026-09-09, CORRECTION D'URGENCE (meme cause que la chute reelle sur Nezha) :
-# avec PINCH_Z eleve (bras vers le haut, podium remesure a 0.8m), PROVEN_PINCH_X=0.35
-# fait depasser J14_SHOULDER_ROLL_L/J19_SHOULDER_ROLL_R hors de leur limite mecanique
-# (Guide_PM01_FR.pdf : [-35, 135]deg) DES LE SERRAGE (-41.5deg calcule, avant meme toute
-# levee) -- confirme numeriquement (solve_ik + limites du guide, jamais teste en direct
-# en simu, trouve avant qu'une chute ne se produise ici). Baisse a 0.26 (marge ~7.6deg).
-# ATTENTION : ceci reduit la portee du bras de 9cm -- WALK_DURATION (calibree pour amener
-# le robot a la bonne distance pour un reach de 0.35) devra probablement etre recalibree
-# (marche plus longue, robot plus pres du carton) pour que le bras atteigne encore le
-# carton avec ce reach reduit. PAS ENCORE VERIFIE en sim avec ce nouveau PINCH_X.
-PROVEN_PINCH_X = 0.26
-PINCH_Y = 0.35
+# 2026-09-09 : PROVEN_PINCH_X=0.26 (marge shoulder-roll seulement +3.95deg a la
+# levee) restait trop court pour atteindre le carton a la distance de marche
+# WALK_DURATION=2.3 (seule distance jugee sure a l'oeil par l'utilisateur --
+# plus proche = le robot touche le podium et bascule). Augmenter juste
+# PINCH_X depasse vite la limite J14/J19_SHOULDER_ROLL ([-35,135]deg,
+# Guide_PM01_FR.pdf) : 0.28 la viole deja (-2.41deg).
+# Fix : elargir PINCH_Y (largeur d'approche AVANT le serrage, n'affecte pas le
+# point de prise final -- SQUEEZE_Y/PINCH_Z restent la cible physique reelle)
+# fait converger l'IK (redondant, solutions multiples) vers une autre branche
+# articulaire qui laisse bien plus de marge au meme point de prise. Verifie
+# numeriquement (solve_ik, chaine complete approche->serrage->levee, les 5
+# articulations du bras, pas juste le roll) : PINCH_X=0.34/PINCH_Y=0.45 donne
+# marge=+14.6deg (levee) contre +3.95deg avant, tout en portant 8cm plus loin.
+# PAS ENCORE TESTE en simu (calcul IK seul, physique MuJoCo non verifiee).
+PROVEN_PINCH_X = 0.34
+PINCH_Y = 0.45
 SQUEEZE_Y = 0.095
 PINCH_Z = 0.106
-LIFT_Z = 0.20                 # meme correction que LIFT_Z reel (levee.py) : 0.391
-                               # depassait aussi la limite d'epaule en fin de levee --
-                               # 0.20 verifie dans les limites (marge ~4.2deg) avec
-                               # PINCH_X=0.26 ci-dessus.
+LIFT_Z = 0.20
 
+# 2026-09-09 : essai walk_to en mode --real (BodyVelCmd) abandonne -- le
+# noeud ROS2 qui gererait /motion/body_vel_cmd et /motion/motion_state cote
+# reel (locomotion_interface_node) n'existe pas du tout en simulation
+# (absent de `ros2 node list`, absent du SDK). La marche en sim passe par
+# l'emulation manette LCM (motion_task_manager interne pilote par
+# virtual_gamepad_input_adapter, mecanisme different et non concerne).
+# Retour a l'echelle stick normale.
 WALK_STICK = 0.85
 
 
@@ -136,7 +144,7 @@ class ChefNode(Node):
         self.get_logger().info(f"--- etape {step} ---")
 
     def run_sequence(self) -> None:
-        WALK_DURATION = 2.5
+        WALK_DURATION = 2.2
         TURN_CORRECTION = 0.0
         WALK_STANCE_SCALE = 0.0
 
@@ -175,9 +183,26 @@ class ChefNode(Node):
             return
 
         self._publish_step(60)
+        # 2026-09-09 : cause racine trouvee -- WAIST_KP/KD=150/3.0 (pivot.py,
+        # valeurs qui marchent sur le VRAI robot) ne produisait QUASIMENT
+        # AUCUNE rotation reelle en sim (confirme via /hardware/joint_state :
+        # <5deg de bruit au lieu de 45-180deg vises) -- donc TOUTES les
+        # chutes precedentes (180/90/45deg, angle sans effet observable)
+        # venaient en realite du depivot+relachement, pas d'une vraie
+        # rotation. Gains montes a 500/10.0 dans pivot.py.
+        # 45deg : confirme a 45.1deg reel (waist_log), STABLE de bout en
+        # bout, confirme visuellement par l'utilisateur (2/2).
+        # 60deg ET 90deg : reproductiblement bloques (<3deg de bruit, meme
+        # apres nettoyage complet DDS -- pas un probleme de ressources).
+        # Limite matterielle reelle de J12_WAIST_YAW (Guide_PM01_FR.pdf p.10,
+        # ligne 35) : -4.014 a 1.57 rad = -230 a +90deg -- 90deg est pile
+        # sur la limite haute (rejet attendu), mais 60deg est theoriquement
+        # dans la plage et bloque quand meme -- deuxieme restriction non
+        # identifiee (probablement l'arbitre de securite), pas creusee plus
+        # loin. 45deg retenu comme valeur fiable pour la tache.
         if not self.pivot(pinch_x=pinch_x, pinch_y=PINCH_Y, pinch_z=PINCH_Z, squeeze_y=SQUEEZE_Y,
-                           lift_z=LIFT_Z, angle_deg=180.0, walk_stance_scale=WALK_STANCE_SCALE):
-            self.get_logger().error("run_sequence : pivot(180) a echoue -- arret.")
+                           lift_z=LIFT_Z, angle_deg=45.0, walk_stance_scale=WALK_STANCE_SCALE):
+            self.get_logger().error("run_sequence : pivot(45) a echoue -- arret.")
             return
 
         self.stand(settle_seconds=3.0)
