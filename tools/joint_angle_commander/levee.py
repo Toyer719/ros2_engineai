@@ -100,7 +100,22 @@ PINCH_X = 0.216           # 2026-08-27 : recalibre pour un placement du robot a 
                            # valider par --only-phase approche avant d'enchainer serrage/levee.
 PINCH_Y = 0.22            # ecart Y avant serrage (demi-largeur carton = 0.0955m) -- aligne sur la
                            # valeur validee en simu le 2026-08-27 (etait 0.28)
-SQUEEZE_Y = 0.093         # 2026-09-09 : 0.090 juge "ferme trop" sur le robot reel avec la
+SQUEEZE_Y = 0.110         # 2026-09-10, demande explicite utilisateur ("large pour y aller a
+                          # tatillon") apres que 0.095 (0.5mm de compression nominale
+                          # seulement) ait ete juge encore trop ferme. AU-DELA de la
+                          # demi-largeur reelle du carton (0.0955m) -- verifie en git log/
+                          # memoire, AUCUNE valeur >0.105 jamais utilisee sur ce robot avant
+                          # ce jour (0.105 avec rotation de poignet, desactivee, deja juge
+                          # trop serre). En theorie les mains ne compriment plus le carton du
+                          # tout a cette largeur (l'effleurent au mieux) -- accepte pour
+                          # debloquer le test et iterer, au prix d'un risque de glissement/
+                          # prise plus faible pendant la levee/le pivot. Si le carton glisse
+                          # ou tombe pendant le maintien, redescendre progressivement vers
+                          # 0.0955 plutot que revenir directement a 0.093/0.095 (deja juges
+                          # trop fermes) -- le vrai probleme sous-jacent reste probablement la
+                          # geometrie du coude (-102/-111deg, contact avant-bras/torse
+                          # suspecte), pas cette valeur seule.
+                          # 2026-09-09 : 0.090 juge "ferme trop" sur le robot reel avec la
                           # nouvelle geometrie bras-vers-le-haut (meme valeur nominale, mais
                           # angle de coude different -> compression differente) -- desserre
                           # legerement (+3mm). A reajuster encore si besoin.
@@ -129,10 +144,16 @@ LIFT_Z = 0.15                 # 2026-09-09, CORRECTION D'URGENCE : 0.391 (qui ga
                               # ~4.6deg de marge sur l'epaule (la plus juste). Levee reelle
                               # desormais modeste (~4-5cm au-dessus du point de prise), pas
                               # 28.5cm comme avant -- la geometrie ne permet plus plus.
-APPROACH_DURATION = 5.0      # 2026-09-09 : etait 4.0, ralenti (retour utilisateur "va trop
-                              # vite") sur le robot reel avec la nouvelle geometrie.
-SQUEEZE_DURATION = 5.0       # 2026-09-09 : etait 4.0, meme raison.
-LIFT_DURATION = 6.0          # 2026-09-09 : etait 5.0, meme raison.
+APPROACH_DURATION = 3.5      # 2026-09-10 : etait 5.0 -- premiere sequence complete
+                              # (levee_pivot.py, pivot+depose carton en main) validee sans
+                              # incident sur le robot reel a 5.0/5.0/6.0, jugee "tres lente"
+                              # -- accelere modere (~30-40%), PAS retour a 4.0 (deja juge
+                              # trop rapide le 09/09, cf commentaire d'origine ci-dessous).
+SQUEEZE_DURATION = 3.5       # 2026-09-10 : etait 5.0, meme reduction moderee.
+LIFT_DURATION = 4.0          # 2026-09-10 : etait 6.0, meme reduction moderee.
+# 2026-09-09 (historique) : ces 3 valeurs etaient a 4.0/4.0/5.0, ralenties suite a un
+# retour utilisateur "va trop vite" sur la geometrie d'alors -- garder ces nouvelles
+# valeurs AU-DESSUS de 4.0/4.0/5.0 si une future demande d'acceleration arrive.
 HOLD_SECONDS = 0.0          # 2026-09-09 : etait 3.0 (maintien immobile en haut avant
                              # redressement genoux + relachement) -- retire a la demande
                              # de l'utilisateur pour accelerer (perceptible comme "il

@@ -27,6 +27,15 @@ float32 walk_stance_scale 3.0
 float32 walk_stance_stiffness_scale 1.8
 float32 walk_stance_duration 3.0
 float32 release_ramp_seconds 1.5
+# 2026-09-10 : depivot_from_deg > 0 -- le buste est ENCORE TOURNE a cet angle quand
+# ce node prend le relais (pivot.py appele avec depivot_before_release=false) --
+# tenu a cet angle (gains souples) pendant baisse/desserrage/degagement, PUIS
+# ramene a 0deg juste avant le relachement final. 0.0 (defaut) = comportement
+# d'avant, buste deja centre par pivot.py, aucun depivot ici. Port exact de
+# l'ordre valide sur le robot reel le meme jour (lacher PENDANT que tourne,
+# bras replies, PUIS revenir au centre).
+float32 depivot_from_deg 0.0
+float32 depivot_duration 2.0
 ---
 # Result
 bool success

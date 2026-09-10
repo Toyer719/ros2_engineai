@@ -72,7 +72,8 @@ class DeposeActionServer(Node):
             self._lever = Lever(self, subscriber_timeout=10.0)
         return self._lever
 
-    def _bend_knees(self, lever, scale, stiffness_scale, duration, qL_hold, qR_hold, rate_hz=30):
+    def _bend_knees(self, lever, scale, stiffness_scale, duration, qL_hold, qR_hold,
+                     waist_hold, rate_hz=30):
         """Identique a lift.py::_bend_knees -- refait ICI car walk_to (entre
         pivot et ce node) a rendu les jambes a pd_stand (jambes DROITES) le
         temps de la marche vers le 2e poste -- il faut refaire la flexion
@@ -110,7 +111,7 @@ class DeposeActionServer(Node):
                 lever[idx] = float(angle)
             for idx, angle in zip(RIGHT_JOINT_INDICES, qR_hold):
                 lever[idx] = float(angle)
-            lever[WAIST_JOINT_INDEX] = 0.0
+            lever[WAIST_JOINT_INDEX] = float(waist_hold)
             time.sleep(1.0 / rate_hz)
 
     def _move_arms(self, lever, qL0, qL1, qR0, qR1, duration, rate_hz=30):
@@ -161,6 +162,7 @@ class DeposeActionServer(Node):
         hold_R = _rotate_xy([g.pinch_x, -g.squeeze_y, g.hold_z], g.pinch_yaw_offset)
         qL_hold = solve_ik(LEFT_CHAIN, HAND_OFFSET_LEFT, hold_L, Q_LEFT_HOME)
         qR_hold = solve_ik(RIGHT_CHAIN, HAND_OFFSET_RIGHT, hold_R, Q_RIGHT_HOME)
+        waist_hold = np.radians(g.depivot_from_deg)
 
         if g.walk_stance:
             self.get_logger().info(
@@ -169,7 +171,7 @@ class DeposeActionServer(Node):
                 "(bras/buste republies en continu pour ne pas lacher le carton)"
             )
             self._bend_knees(lever, g.walk_stance_scale, g.walk_stance_stiffness_scale,
-                              g.walk_stance_duration, qL_hold, qR_hold)
+                              g.walk_stance_duration, qL_hold, qR_hold, waist_hold)
 
         # q_squeeze_L/R = qL_hold/qR_hold, deja calcules a la hauteur reellement
         # tenue (g.hold_z) et deja republies en continu pendant _bend_knees
@@ -180,7 +182,7 @@ class DeposeActionServer(Node):
             lever[idx] = float(angle)
         for idx, angle in zip(RIGHT_JOINT_INDICES, q_squeeze_R):
             lever[idx] = float(angle)
-        lever[WAIST_JOINT_INDEX] = 0.0
+        lever[WAIST_JOINT_INDEX] = float(waist_hold)
 
         self.get_logger().info(
             f"depose -- Z {g.hold_z:.3f} -> {g.drop_z:.3f} ({g.depose_duration:.1f}s) "
@@ -213,6 +215,22 @@ class DeposeActionServer(Node):
 
         self.get_logger().info(f"degagement -- retour bras home ({g.degagement_duration:.1f}s)")
         qL, qR = self._move_arms(lever, qL, Q_LEFT_HOME, qR, Q_RIGHT_HOME, g.degagement_duration)
+
+        if g.depivot_from_deg != 0.0:
+            self.get_logger().info(
+                f"depivot -- {g.depivot_from_deg:.0f}deg -> 0deg ({g.depivot_duration:.1f}s), "
+                "carton deja lache, bras replies -- buste seul"
+            )
+            n_depivot = max(1, int(g.depivot_duration * 30))
+            for i in range(n_depivot + 1):
+                a = ease(i / n_depivot)
+                waist = (1.0 - a) * waist_hold
+                for idx, angle in zip(LEFT_JOINT_INDICES, qL):
+                    lever[idx] = float(angle)
+                for idx, angle in zip(RIGHT_JOINT_INDICES, qR):
+                    lever[idx] = float(angle)
+                lever[WAIST_JOINT_INDEX] = float(waist)
+                time.sleep(1.0 / 30)
 
         self.get_logger().info(f"relachement final -- rampe {g.release_ramp_seconds:.1f}s")
         self._release(lever, qL, qR, g.release_ramp_seconds)

@@ -236,10 +236,20 @@ class ChefNode(Node):
         # free_legs_for_walk=False -- carton toujours tenu, jambes PAS
         # rendues a la marche), PUIS un stand() complet (plus rien tenu),
         # PUIS une marche a vide (deja prouvee sure) vers un 2e point.
+        # 2026-09-10 (suite) : ordre repris du robot reel, valide ce meme jour
+        # apres plusieurs iterations en direct -- depivot_before_release=False
+        # : le buste RESTE tourne (45deg) quand pivot() rend la main, carton
+        # toujours tenu. Le relachement (dans depose(), ci-dessous) se fait
+        # PENDANT que le buste est encore tourne, PUIS le buste revient au
+        # centre -- pas l'inverse (ancien ordre, faisait retraverser aux bras
+        # tendus l'espace ou le carton venait d'etre pose, choc constate sur
+        # le reel).
+        PIVOT_ANGLE_DEG = 45.0
         if not self.pivot(pinch_x=pinch_x, pinch_y=PINCH_Y, pinch_z=PINCH_Z, squeeze_y=SQUEEZE_Y,
-                           lift_z=LIFT_Z, angle_deg=45.0, walk_stance_scale=WALK_STANCE_SCALE,
-                           release_after=False, free_legs_for_walk=False):
-            self.get_logger().error("run_sequence : pivot(45) a echoue -- arret.")
+                           lift_z=LIFT_Z, angle_deg=PIVOT_ANGLE_DEG, walk_stance_scale=WALK_STANCE_SCALE,
+                           release_after=False, free_legs_for_walk=False,
+                           depivot_before_release=False):
+            self.get_logger().error(f"run_sequence : pivot({PIVOT_ANGLE_DEG:.0f}) a echoue -- arret.")
             return
 
         # depose() SUR PLACE (pas de marche entre pivot et depose -- evite le
@@ -247,8 +257,12 @@ class ChefNode(Node):
         # perimes de Depose.action) : c'est la hauteur ou pivot() tenait
         # reellement le carton, un ecart ferait sauter les bras au premier
         # message de depose() (meme piege que celui deja corrige dans
-        # depose.py). drop_z = PINCH_Z (hauteur de prise reelle actuelle, pas
-        # le defaut perime de Depose.action non plus). walk_stance=true
+        # depose.py). drop_z = LIFT_Z - 0.03 (PETITE baisse avant relachement,
+        # PAS un retour complet a PINCH_Z -- meme reglage que le robot reel ce
+        # jour). depivot_from_deg=PIVOT_ANGLE_DEG : le buste est ENCORE tourne
+        # a l'entree de ce node (voir commentaire ci-dessus), depose.py le
+        # tient a cet angle pendant baisse/desserrage/degagement puis le
+        # ramene a 0 juste avant le relachement final. walk_stance=true
         # (defaut) volontairement garde : re-flechit les genoux (deja
         # droits, WALK_STANCE_SCALE=0.0 pendant lift/pivot) avant de
         # manipuler la charge -- meme pattern deja prouve stable partout
@@ -256,7 +270,8 @@ class ChefNode(Node):
         # statiques + charge qui descend, jamais testee.
         self._publish_step(80)
         if not self.depose(pinch_x=pinch_x, pinch_y=PINCH_Y, pinch_z=LIFT_Z, squeeze_y=SQUEEZE_Y,
-                            hold_z=LIFT_Z, drop_z=PINCH_Z):
+                            hold_z=LIFT_Z, drop_z=LIFT_Z - 0.03,
+                            depivot_from_deg=PIVOT_ANGLE_DEG, depivot_duration=2.0):
             self.get_logger().error("run_sequence : depose() a echoue -- arret.")
             return
 
