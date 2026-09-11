@@ -62,7 +62,7 @@ from levee import (
     WALK_STANCE_STIFFNESS_SCALE, WALK_STANCE_DURATION, LEVEE_STIFFNESS,
     MOTION_STATE_TIMEOUT, ELBOW_YAW_ROTATION_DEG,
     _checkpoint, _rotate_xy, _solve_ik_locked_wrist, _bend_knees, _straighten_knees,
-    _publish, move_arms, ease,
+    _publish, move_arms, ease, forward_kinematics,
 )
 from pivot_real import WAIST_JOINT_INDEX, WAIST_KP, WAIST_KD, _ease as _pivot_ease
 
@@ -172,8 +172,24 @@ def run_lift_and_pivot(node, lever, args):
                             WAYPOINT_DURATION, dry_run=args.dry_run)
 
         _checkpoint(f"approche -- mains vers pinch, {APPROACH_DURATION:.1f}s", confirm)
-        qL, qR = move_arms(lever, WAYPOINT_Q_LEFT, q_pinch_L, WAYPOINT_Q_RIGHT, q_pinch_R,
-                            APPROACH_DURATION, dry_run=args.dry_run)
+        # 2026-09-11 : ramp en ESPACE CARTESIEN (pas move_arms en espace articulaire) -- la
+        # main monte trop haut en route sinon (arc, pas une ligne droite), meme fix que
+        # levee.py --only-phase approche, voir son commentaire pour le detail.
+        pinch_target_L = _rotate_xy([PINCH_X, PINCH_Y, args.pinch_z], args.pinch_yaw_offset)
+        waypoint_hand_L = forward_kinematics(LEFT_CHAIN, HAND_OFFSET_LEFT, WAYPOINT_Q_LEFT)
+        qL, qR = WAYPOINT_Q_LEFT.copy(), WAYPOINT_Q_RIGHT.copy()
+        n = max(1, int(APPROACH_DURATION * RATE_HZ))
+        for i in range(n + 1):
+            a = ease(i / n)
+            target = waypoint_hand_L + a * (pinch_target_L - waypoint_hand_L)
+            qL = _solve_ik_locked_wrist(LEFT_CHAIN, HAND_OFFSET_LEFT, target, qL, wrist_rotation, iters=30)
+            qR = mirror_left_to_right(qL)
+            if args.dry_run:
+                if i in (0, n):
+                    print(f"    [dry-run] t={i/RATE_HZ:.2f}s  qL={np.round(qL, 4)}  qR={np.round(qR, 4)}")
+                continue
+            _publish(lever, qL, qR)
+            time.sleep(1.0 / RATE_HZ)
 
     if run_serrage:
         _checkpoint(f"serrage -- Y +-{PINCH_Y} -> +-{SQUEEZE_Y}, {SQUEEZE_DURATION:.1f}s "

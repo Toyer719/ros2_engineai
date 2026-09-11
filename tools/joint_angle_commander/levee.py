@@ -233,8 +233,7 @@ def _rotate_xy(point, yaw_offset):
     return np.array([x * c - y * s, x * s + y * c, z])
 
 
-def _solve_ik_locked_wrist(chain, hand_offset, target, q_init, last_angle, iters=200, damping=0.05,
-                            null_space_gain=0.2, null_space_pref=None):
+def _solve_ik_locked_wrist(chain, hand_offset, target, q_init, last_angle, iters=200, damping=0.05):
     """Comme solve_ik (lift_carton.py) mais fige le DERNIER angle du chain (ELBOW_YAW,
     poignet) a `last_angle` et ne resout la position qu'avec les 4 AUTRES articulations.
     solve_ik normal laisse les 2 DDL redondants du chain a 5 joints/3 DDL de position au
@@ -242,20 +241,9 @@ def _solve_ik_locked_wrist(chain, hand_offset, target, q_init, last_angle, iters
     le poignet a toutes les distances (cf. commentaire dans run_lift_sequence). Verifie
     numeriquement (hors robot) : erreur de position ~3e-8 sur les 4 cibles pince/serrage
     gauche/droite a PINCH_X=0.216, poignet exactement a l'angle demande, tous les joints
-    dans la limite mecanique +-150deg.
-
-    2026-09-11 : ajout de null_space_gain/null_space_pref -- avec le poignet fige, il reste
-    encore 1 DDL redondant (3 equations de position, 4 inconnues) : SANS regularisation, le
-    COUDE peut rester replie pres de sa valeur de depart (ex. -110deg, herite du point de
-    passage) meme quand la main atteint deja la bonne position -- constate sur le robot reel
-    ("le bras vise vers le haut au lieu de face a lui"), meme cause que le bug deja corrige
-    cote simu (lift_carton.py::solve_arm_ik) sur un AUTRE joint fige (le coude, pas le
-    poignet, la ou solve_ik_locked_wrist fige le poignet). Rappel vers null_space_pref
-    (par defaut q_init) dans le noyau du Jacobien -- ne change PAS la position finale de la
-    main, seulement quelle solution redondante est choisie parmi celles qui l'atteignent."""
+    dans la limite mecanique +-150deg."""
     q = q_init.copy()
     q[-1] = last_angle
-    q_pref = q_init.copy() if null_space_pref is None else null_space_pref.copy()
     n_free = len(q) - 1
     for _ in range(iters):
         p0 = forward_kinematics(chain, hand_offset, q)
@@ -268,11 +256,7 @@ def _solve_ik_locked_wrist(chain, hand_offset, target, q_init, last_angle, iters
             dq[i] += 1e-6
             J[:, i] = (forward_kinematics(chain, hand_offset, dq) - p0) / 1e-6
         JJt = J @ J.T + damping ** 2 * np.eye(3)
-        J_pinv = J.T @ np.linalg.inv(JJt)
-        step = J_pinv @ error
-        if null_space_gain:
-            null_proj = np.eye(n_free) - J_pinv @ J
-            step = step + null_space_gain * (null_proj @ (q_pref[:n_free] - q[:n_free]))
+        step = J.T @ np.linalg.solve(JJt, error)
         q[:n_free] = q[:n_free] + step
         q[-1] = last_angle
     return q
@@ -448,8 +432,28 @@ def run_lift_sequence(node, lever, args):
             f"poignet pivote de {np.degrees(wrist_rotation):.0f}deg), {APPROACH_DURATION}s",
             confirm,
         )
-        qL, qR = move_arms(lever, WAYPOINT_Q_LEFT, q_pinch_L, WAYPOINT_Q_RIGHT, q_pinch_R,
-                            APPROACH_DURATION, dry_run=args.dry_run)
+        # 2026-09-11 : move_arms() interpole en ESPACE ARTICULAIRE (angles lineaires) entre
+        # le point de passage et pinch -- constate sur le robot reel que la main monte trop
+        # haut en cours de route (arc, pas une ligne droite) meme si les 2 postures aux
+        # extremites sont correctes, a cause de la non-linearite de la geometrie du bras.
+        # Fix : ramp en ESPACE CARTESIEN comme la levee ci-dessous -- interpole la position
+        # 3D de la main en ligne droite du point de passage vers pinch, IK resolue a chaque
+        # pas (poignet toujours fige a wrist_rotation), warm-start sur le pas precedent.
+        pinch_target_L = _rotate_xy([PINCH_X, PINCH_Y, args.pinch_z], args.pinch_yaw_offset)
+        waypoint_hand_L = forward_kinematics(LEFT_CHAIN, HAND_OFFSET_LEFT, WAYPOINT_Q_LEFT)
+        qL, qR = WAYPOINT_Q_LEFT.copy(), WAYPOINT_Q_RIGHT.copy()
+        n = max(1, int(APPROACH_DURATION * RATE_HZ))
+        for i in range(n + 1):
+            a = ease(i / n)
+            target = waypoint_hand_L + a * (pinch_target_L - waypoint_hand_L)
+            qL = _solve_ik_locked_wrist(LEFT_CHAIN, HAND_OFFSET_LEFT, target, qL, wrist_rotation, iters=30)
+            qR = mirror_left_to_right(qL)
+            if args.dry_run:
+                if i in (0, n):
+                    print(f"    [dry-run] t={i/RATE_HZ:.2f}s  qL={np.round(qL, 4)}  qR={np.round(qR, 4)}")
+                continue
+            _publish(lever, qL, qR)
+            time.sleep(1.0 / RATE_HZ)
 
     if run_serrage:
         _checkpoint(
