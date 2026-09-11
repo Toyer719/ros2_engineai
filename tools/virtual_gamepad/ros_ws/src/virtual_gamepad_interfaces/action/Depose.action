@@ -15,12 +15,24 @@ float32 pinch_x 0.40
 float32 pinch_y 0.35
 float32 pinch_z -0.054
 float32 squeeze_y 0.095
+# 2026-09-11 : open_y/desserrage_duration PLUS UTILISES (etape "desserrage"
+# retiree, confirmee inutile par l'utilisateur -- le passage direct vers le
+# point de passage "coudes vers l'arriere", plus large en Y que squeeze_y,
+# ecarte deja les mains et relache le carton au passage). Champs gardes pour
+# retro-compatibilite (defauts inertes), pas retires de l'interface.
 float32 open_y 0.35
 float32 hold_z 0.146
 float32 drop_z -0.054
 float32 pinch_yaw_offset 0.0
 float32 depose_duration 3.0
 float32 desserrage_duration 2.0
+# 2026-09-11 : degagement passe desormais par le meme point de passage "coudes
+# vers l'arriere" que lift.py (WAYPOINT_Q_LEFT/RIGHT dans depose.py), sur
+# demande explicite de l'utilisateur ("apres le pivot, meme logique" pour
+# remettre les bras le long du corps) -- degagement_waypoint_duration (bras
+# tenus -> point de passage) PUIS degagement_duration (point de passage ->
+# Q_HOME, inchange).
+float32 degagement_waypoint_duration 2.0
 float32 degagement_duration 2.0
 bool walk_stance true
 float32 walk_stance_scale 3.0
@@ -36,6 +48,15 @@ float32 release_ramp_seconds 1.5
 # bras replies, PUIS revenir au centre).
 float32 depivot_from_deg 0.0
 float32 depivot_duration 2.0
+# 2026-09-11 : "tendre les bras" ajoute AVANT la descente (depose), sur demande
+# explicite de l'utilisateur -- redresse les coudes SUR PLACE (meme position de
+# main que la prise deja tenue -- meme pinch_x/squeeze_y/hold_z, PAS d'avancee
+# supplementaire) avant de commencer a baisser/relacher. Implemente via
+# _solve_ik_locked_elbow (depose.py) : fige ELBOW_PITCH a la valeur "repos"
+# (Q_LEFT_HOME/Q_RIGHT_HOME) et ne resout la position de main qu'avec les 4
+# autres articulations -- deterministe, ne depend pas du hasard de branche du
+# solveur standard. PAS ENCORE TESTE en simu physique.
+float32 tendre_duration 2.0
 ---
 # Result
 bool success

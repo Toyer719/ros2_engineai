@@ -13,7 +13,9 @@ from lever import Lever
 
 sys.path.insert(0, "/home/equansrobotic/stagiaire_1/tools/robot_arm_ik")
 from lift_carton import (
-    LEFT_CHAIN, RIGHT_CHAIN, HAND_OFFSET_LEFT, HAND_OFFSET_RIGHT, solve_ik, ease,
+    LEFT_CHAIN, RIGHT_CHAIN, HAND_OFFSET_LEFT, HAND_OFFSET_RIGHT, solve_ik,
+    solve_arm_ik, ease, carton_face_centers, SimStateListener, world_to_robot_local,
+    SQUEEZE_OFFSET_Y, mirror_left_to_right,
 )
 
 from virtual_gamepad_interfaces.action import Depose
@@ -25,6 +27,16 @@ WAIST_HOLD_KP, WAIST_HOLD_KD = 80.0, 2.0
 
 Q_LEFT_HOME = np.array([0.000879, 0.075284, -0.000233, -0.126397, -0.000033])
 Q_RIGHT_HOME = np.array([0.000885, -0.075161, 0.000241, -0.126390, 0.000033])
+
+# 2026-09-11 : point de passage "coudes vers l'arriere" -- meme posture, meme
+# logique, que WAYPOINT_Q_LEFT/RIGHT dans lift.py (voir sa docstring pour le
+# detail de la verification par cinematique directe -- forme en "L" validee
+# sur capture d'ecran par l'utilisateur : bras vers l'arriere-bas, coude
+# ~90deg, avant-bras HORIZONTAL), utilise ICI dans l'AUTRE sens : en repliant
+# les bras le long du corps (degagement, apres le pivot), demande explicite
+# de l'utilisateur ("meme logique" au retour).
+WAYPOINT_Q_LEFT = np.radians([30.0, 5.0, 0.0, -110.0, 0.0])
+WAYPOINT_Q_RIGHT = np.radians([30.0, -5.0, 0.0, -110.0, 0.0])
 
 LEFT_HIP_PITCH_INDEX = 0
 RIGHT_HIP_PITCH_INDEX = 6
@@ -53,16 +65,34 @@ def _rotate_xy(point, yaw_offset):
     return np.array([x * c - y * s, x * s + y * c, z])
 
 
+ELBOW_PITCH_CHAIN_INDEX = 3  # index de ELBOW_PITCH dans LEFT_CHAIN/RIGHT_CHAIN --
+                              # voir lift_carton.py::solve_arm_ik (lock_index)
+
+
 class DeposeActionServer(Node):
     def __init__(self):
         super().__init__("depose")
         self._lever = None
+        self._sim_state = None
         self._server = ActionServer(
             self, Depose, "depose", self._execute, cancel_callback=self._on_cancel,
         )
 
     def _on_cancel(self, goal_handle):
         return CancelResponse.ACCEPT
+
+    def _ensure_sim_state(self) -> SimStateListener:
+        """2026-09-11 : meme pattern que lift.py/pivot.py -- process separe
+        (propre Lever), doit RECALCULER la position tenue plutot que de
+        dependre de g.pinch_x/g.squeeze_y/g.hold_z STATIQUES."""
+        if self._sim_state is None:
+            self._sim_state = SimStateListener()
+            if not self._sim_state.wait_for_first_message(5.0):
+                raise RuntimeError(
+                    "Aucun message sur le canal LCM 'sim_state' apres 5s -- "
+                    "run_mujoco.sh actif ?"
+                )
+        return self._sim_state
 
     def _ensure_lever(self) -> Lever:
         if self._lever is None:
@@ -127,6 +157,25 @@ class DeposeActionServer(Node):
             time.sleep(1.0 / rate_hz)
         return qL, qR
 
+    def _straighten_knees(self, lever, scale, stiffness_scale, duration, rate_hz=30):
+        """2026-09-11 : identique a lift.py::_straighten_knees -- MANQUAIT dans ce
+        fichier (bug reel trouve par telemetrie : le controle natif reprenait la
+        main sur des jambes encore artificiellement flechies par _bend_knees, jamais
+        redressees avant `_release`, chute au `stand()` qui suit immediatement dans
+        chef_node.py). Inverse de _bend_knees() : ramene hanche+genou+cheville de la
+        posture flechie (x`scale`) vers droites (angle 0), interpolation quintique
+        PARCOURUE A L'ENVERS (a=1->0)."""
+        n = max(1, int(duration * rate_hz))
+        for i in range(n + 1):
+            a = 1.0 - _quintic_ease(i / n)
+            lever[LEFT_HIP_PITCH_INDEX] = float(a * scale * WALK_STANCE_HIP_PITCH_L)
+            lever[RIGHT_HIP_PITCH_INDEX] = float(a * scale * WALK_STANCE_HIP_PITCH_R)
+            lever[LEFT_KNEE_PITCH_INDEX] = float(a * scale * WALK_STANCE_KNEE_L)
+            lever[RIGHT_KNEE_PITCH_INDEX] = float(a * scale * WALK_STANCE_KNEE_R)
+            lever[LEFT_ANKLE_PITCH_INDEX] = float(a * scale * WALK_STANCE_ANKLE_PITCH_L)
+            lever[RIGHT_ANKLE_PITCH_INDEX] = float(a * scale * WALK_STANCE_ANKLE_PITCH_R)
+            time.sleep(1.0 / rate_hz)
+
     def _release(self, lever, qL, qR, ramp_seconds, rate_hz=30):
         """Identique a lift.py::_release."""
         if ramp_seconds > 0:
@@ -152,16 +201,41 @@ class DeposeActionServer(Node):
             result.success = False
             return result
 
-        # 2026-09-10 : calcule la pose DEJA TENUE (bras au carton, hauteur
-        # g.hold_z -- suppose que le pinch_x/squeeze_y/hold_z passes ici
-        # correspondent exactement a ce que pivot.py tenait juste avant,
-        # sinon saut de position des le premier message, cf Depose.action)
-        # AVANT la flexion des genoux, pour pouvoir la republier pendant
-        # celle-ci (voir docstring de _bend_knees).
-        hold_L = _rotate_xy([g.pinch_x, g.squeeze_y, g.hold_z], g.pinch_yaw_offset)
-        hold_R = _rotate_xy([g.pinch_x, -g.squeeze_y, g.hold_z], g.pinch_yaw_offset)
-        qL_hold = solve_ik(LEFT_CHAIN, HAND_OFFSET_LEFT, hold_L, Q_LEFT_HOME)
-        qR_hold = solve_ik(RIGHT_CHAIN, HAND_OFFSET_RIGHT, hold_R, Q_RIGHT_HOME)
+        # 2026-09-11 : meme bug que pivot.py -- depose.py est un process
+        # separe (propre Lever) qui recalculait hold_L/hold_R depuis les
+        # valeurs STATIQUES g.pinch_x/g.squeeze_y/g.hold_z passees par
+        # chef_node.py, au lieu du centre des faces REELLEMENT vise/tenu.
+        # On recalcule ici depuis sim_state + carton_face_centers(), comme
+        # lift.py et pivot.py, pour eviter tout saut a la prise de relais.
+        try:
+            sim_state = self._ensure_sim_state()
+        except RuntimeError as exc:
+            self.get_logger().error(f"depose : {exc}")
+            goal_handle.abort()
+            result.success = False
+            return result
+        pose = sim_state.pose()
+        if pose is None:
+            self.get_logger().error("depose : aucune pose sim_state disponible -- abandon.")
+            goal_handle.abort()
+            result.success = False
+            return result
+        RETRACT_PINCH_X = 0.20
+        face_gauche_monde, face_droite_monde = carton_face_centers()
+        hold_L = world_to_robot_local(face_gauche_monde, pose)
+        hold_R = world_to_robot_local(face_droite_monde, pose)
+        hold_L = np.array([RETRACT_PINCH_X, hold_L[1] - SQUEEZE_OFFSET_Y, g.hold_z])
+        hold_R = np.array([RETRACT_PINCH_X, hold_R[1] + SQUEEZE_OFFSET_Y, g.hold_z])
+        # seed = WAYPOINT_Q_LEFT/RIGHT (posture "coudes vers l'arriere",
+        # PROCHE de ce que lift.py/pivot.py tenaient reellement) au lieu de
+        # Q_LEFT_HOME (posture de repos, tres differente) -- meme raison
+        # que le fix identique dans pivot.py (evite un saut d'epaule visible
+        # au relais, constate par l'utilisateur : "les bras pivotent...
+        # 2 fois un serrage").
+        qL_hold = solve_arm_ik(LEFT_CHAIN, HAND_OFFSET_LEFT, hold_L, WAYPOINT_Q_LEFT,
+                                lock_index=ELBOW_PITCH_CHAIN_INDEX,
+                                lock_angle=Q_LEFT_HOME[ELBOW_PITCH_CHAIN_INDEX])
+        qR_hold = mirror_left_to_right(qL_hold)
         waist_hold = np.radians(g.depivot_from_deg)
 
         if g.walk_stance:
@@ -185,34 +259,68 @@ class DeposeActionServer(Node):
         lever[WAIST_JOINT_INDEX] = float(waist_hold)
 
         self.get_logger().info(
-            f"depose -- Z {g.hold_z:.3f} -> {g.drop_z:.3f} ({g.depose_duration:.1f}s) "
+            f"tendre les bras -- coudes redresses sur place, meme position de main "
+            f"({g.tendre_duration:.1f}s)"
+        )
+        q_tendu_L = solve_arm_ik(LEFT_CHAIN, HAND_OFFSET_LEFT, hold_L, q_squeeze_L,
+                                  lock_index=ELBOW_PITCH_CHAIN_INDEX,
+                                  lock_angle=Q_LEFT_HOME[ELBOW_PITCH_CHAIN_INDEX])
+        q_tendu_R = mirror_left_to_right(q_tendu_L)
+        qL, qR = self._move_arms(lever, q_squeeze_L, q_tendu_L, q_squeeze_R, q_tendu_R,
+                                  g.tendre_duration)
+
+        self.get_logger().info(
+            f"depose -- Z {hold_L[2]:.3f} -> {g.drop_z:.3f} ({g.depose_duration:.1f}s) "
             "-- LE CARTON REDESCEND, TOUJOURS SERRE"
         )
-        qL, qR = q_squeeze_L.copy(), q_squeeze_R.copy()
         n = max(1, int(g.depose_duration * 30))
+        q_drop_start_L = qL.copy()
         for i in range(n + 1):
             a = ease(i / n)
-            z = g.hold_z + a * (g.drop_z - g.hold_z)
-            qL = solve_ik(LEFT_CHAIN, HAND_OFFSET_LEFT,
-                           _rotate_xy([g.pinch_x, g.squeeze_y, z], g.pinch_yaw_offset), qL, iters=30)
-            qR = solve_ik(RIGHT_CHAIN, HAND_OFFSET_RIGHT,
-                           _rotate_xy([g.pinch_x, -g.squeeze_y, z], g.pinch_yaw_offset), qR, iters=30)
+            z = hold_L[2] + a * (g.drop_z - hold_L[2])
+            qL = solve_arm_ik(LEFT_CHAIN, HAND_OFFSET_LEFT,
+                               np.array([hold_L[0], hold_L[1], z]), qL,
+                               lock_index=ELBOW_PITCH_CHAIN_INDEX,
+                               lock_angle=Q_LEFT_HOME[ELBOW_PITCH_CHAIN_INDEX], iters=30,
+                               null_space_pref=q_drop_start_L)
+            qR = mirror_left_to_right(qL)
             for idx, angle in zip(LEFT_JOINT_INDICES, qL):
                 lever[idx] = float(angle)
             for idx, angle in zip(RIGHT_JOINT_INDICES, qR):
                 lever[idx] = float(angle)
             time.sleep(1.0 / 30)
 
+        # 2026-09-11 : "tendre les bras" AVANT relachement -- sur demande
+        # explicite de l'utilisateur ("ajoute tendre les bras avant de lacher
+        # le carton"). Depuis la reactivation du serrage (SQUEEZE_OFFSET_Y),
+        # les mains sont encore ENFONCEES de 15mm dans le carton a ce stade
+        # (le meme decalage tenu depuis lift.py) -- sauter directement vers le
+        # point de passage "coudes vers l'arriere" (angles fixes, pas d'IK)
+        # les ferait potentiellement racler/traverser le carton en chemin.
+        # Cette etape ouvre d'abord la prise EN LIGNE DROITE (IK, coude
+        # toujours fige) jusqu'au centre de face (desserre exactement les
+        # SQUEEZE_OFFSET_Y de serrage), puis SEULEMENT ensuite le degagement
+        # (coudes vers l'arriere) peut suivre sans accrocher le carton.
         self.get_logger().info(
-            f"desserrage -- Y +-{g.squeeze_y:.3f} -> +-{g.open_y:.3f} "
-            f"({g.desserrage_duration:.1f}s) -- LE CARTON EST RELACHE ICI"
+            f"tendre les bras -- ouverture du serrage avant relachement ({g.tendre_duration:.1f}s)"
         )
-        q_open_L = solve_ik(LEFT_CHAIN, HAND_OFFSET_LEFT,
-                             _rotate_xy([g.pinch_x, g.open_y, g.drop_z], g.pinch_yaw_offset), qL)
-        q_open_R = solve_ik(RIGHT_CHAIN, HAND_OFFSET_RIGHT,
-                             _rotate_xy([g.pinch_x, -g.open_y, g.drop_z], g.pinch_yaw_offset), qR)
-        qL, qR = self._move_arms(lever, qL, q_open_L, qR, q_open_R, g.desserrage_duration)
+        # Z = g.drop_z (hauteur REELLEMENT atteinte a la fin de la descente
+        # ci-dessus), PAS hold_L[2]/hold_R[2] qui valent toujours la hauteur
+        # de DEPART (jamais reassignes par la boucle de descente).
+        release_L = np.array([hold_L[0], hold_L[1] + SQUEEZE_OFFSET_Y, g.drop_z])
+        q_release_L = solve_arm_ik(LEFT_CHAIN, HAND_OFFSET_LEFT, release_L, qL,
+                                    lock_index=ELBOW_PITCH_CHAIN_INDEX,
+                                    lock_angle=Q_LEFT_HOME[ELBOW_PITCH_CHAIN_INDEX])
+        q_release_R = mirror_left_to_right(q_release_L)
+        qL, qR = self._move_arms(lever, qL, q_release_L, qR, q_release_R, g.tendre_duration)
 
+        self.get_logger().info(
+            f"degagement -- coudes vers l'arriere ({g.degagement_waypoint_duration:.1f}s) "
+            "-- LE CARTON EST RELACHE ICI (l'ecartement des mains vers ce point de passage "
+            "suffit, plus besoin d'un desserrage separe)"
+        )
+        qL, qR = self._move_arms(lever, qL, WAYPOINT_Q_LEFT, qR, WAYPOINT_Q_RIGHT,
+                                  g.degagement_waypoint_duration)
         self.get_logger().info(f"degagement -- retour bras home ({g.degagement_duration:.1f}s)")
         qL, qR = self._move_arms(lever, qL, Q_LEFT_HOME, qR, Q_RIGHT_HOME, g.degagement_duration)
 
@@ -231,6 +339,13 @@ class DeposeActionServer(Node):
                     lever[idx] = float(angle)
                 lever[WAIST_JOINT_INDEX] = float(waist)
                 time.sleep(1.0 / 30)
+
+        if g.walk_stance:
+            self.get_logger().info(
+                f"retrait jambes -- flechies -> droites ({g.walk_stance_duration:.1f}s)"
+            )
+            self._straighten_knees(lever, g.walk_stance_scale, g.walk_stance_stiffness_scale,
+                                    g.walk_stance_duration)
 
         self.get_logger().info(f"relachement final -- rampe {g.release_ramp_seconds:.1f}s")
         self._release(lever, qL, qR, g.release_ramp_seconds)

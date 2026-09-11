@@ -53,8 +53,24 @@ GOAL_TIMEOUT_S = 300.0
 # +14.7deg) -- gain de profondeur modeste (+0.5cm) mais c'est le maximum
 # atteignable a cette hauteur sans re-tomber sur la branche tordue ou violer
 # la limite. PAS ENCORE TESTE en simu physique.
+# 2026-09-10 : chute confirmee par telemetrie a 0.345 -- le bras s'etend jusqu'au
+# podium pendant la levee/le pivot et finit par le toucher (carton alors a ras du
+# bord du podium, sans marge). Essai : carton rapproche pour DEBORDER du podium
+# (7.25cm) + PINCH_X reduit a 0.28 pour compenser -- ABANDONNE le 2026-09-11 sur
+# demande explicite de l'utilisateur (carton remis a sa position d'origine dans
+# pm01_edu_carton.xml, "ne deborde plus"). Le probleme podium est desormais
+# attaque cote TRAJECTOIRE du bras (point de passage "coudes vers l'arriere"
+# dans lift.py avant d'atteindre la cible finale, meme logique au retour dans
+# depose.py) plutot que cote geometrie de la scene ou portee reduite -- PINCH_X
+# remis a 0.345 (valeur qui atteint bien le carton a sa position d'origine).
 PROVEN_PINCH_X = 0.345
-PINCH_Y = 0.50
+# 2026-09-11 : 0.50 (ancien "large") juge "pas tres fluide" par l'utilisateur --
+# lift.py fusionnait alors visee+serrage en un seul mouvement, ce qui supprimait
+# tout geste de fermeture visible. Redescendu a un ecart MODERE (0.22, demande
+# explicite : "ecart modere ~0.20-0.25") -- visee (pinch_y) et serrage
+# (squeeze_y) restent 2 mouvements distincts dans lift.py, juste moins ecartes
+# qu'avant.
+PINCH_Y = 0.22
 SQUEEZE_Y = 0.095
 PINCH_Z = 0.106
 LIFT_Z = 0.20
@@ -166,7 +182,7 @@ class ChefNode(Node):
         self.get_logger().info(f"--- etape {step} ---")
 
     def run_sequence(self) -> None:
-        WALK_DURATION = 2.2
+        WALK_DURATION = 2.3
         TURN_CORRECTION = 0.0
         WALK_STANCE_SCALE = 0.0
 
@@ -244,7 +260,7 @@ class ChefNode(Node):
         # centre -- pas l'inverse (ancien ordre, faisait retraverser aux bras
         # tendus l'espace ou le carton venait d'etre pose, choc constate sur
         # le reel).
-        PIVOT_ANGLE_DEG = 45.0
+        PIVOT_ANGLE_DEG = 90.0
         if not self.pivot(pinch_x=pinch_x, pinch_y=PINCH_Y, pinch_z=PINCH_Z, squeeze_y=SQUEEZE_Y,
                            lift_z=LIFT_Z, angle_deg=PIVOT_ANGLE_DEG, walk_stance_scale=WALK_STANCE_SCALE,
                            release_after=False, free_legs_for_walk=False,
@@ -277,16 +293,13 @@ class ChefNode(Node):
 
         self.stand(settle_seconds=3.0)
 
-        # Marche a vide (rien tenu) vers un 2e point -- deja prouvee sure de
-        # nombreuses fois aujourd'hui, sert juste a montrer que le robot
-        # peut encore se deplacer apres la tache, sans reproduire le
-        # handoff instable.
-        self._publish_step(90)
-        if not self.walk_to(forward=WALK_FORWARD_MPS, turn=0.0, duration=1.5):
-            self.get_logger().error("run_sequence : walk_to(depart) a echoue -- arret.")
-            return
-
-        self.stand(settle_seconds=3.0)
+        # 2026-09-10 : etape 90 (marche a vide vers un "2e point") retiree --
+        # ne servait plus a rien depuis que depose() se fait SUR PLACE (pas de
+        # vrai 2e poste a atteindre) et repartait dans la MEME direction que
+        # la marche d'approche, donc droit dans le podium -- chute confirmee
+        # par telemetrie (z 0.82->0.11 en ~1.5s pendant cette marche, robot
+        # arrete a x=1.69m, au-dela de la face avant du podium x=1.6325m).
+        # La sequence se termine desormais sur le stand() juste au-dessus.
         self.get_logger().info("run_sequence : sequence complete terminee.")
         self._publish_step(0)
 

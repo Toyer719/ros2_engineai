@@ -40,6 +40,16 @@ float32 pinch_z -0.054
 float32 pinch_yaw_offset 0.0
 float32 squeeze_y 0.086
 float32 lift_z 0.146
+# 2026-09-11 : point de passage ajoute AVANT l'approche finale, sur demande
+# explicite de l'utilisateur ("il vise d'abord un point pour que ses coudes
+# flechissent vers l'arriere et que les avant-bras atteignent la hauteur, et
+# seulement apres on vise le carton"). Premier essai (cible cartesienne proche
+# du corps a la meme hauteur) faisait LEVER les bras au lieu de reculer les
+# coudes -- corrige : posture articulaire FIXE (WAYPOINT_Q_LEFT/RIGHT dans
+# lift.py, plus de champ waypoint_pinch_x ici). Mouvement Q_HOME->point de
+# passage dure waypoint_duration, PUIS point de passage->pinch (cible
+# d'approche existante) dure approach_duration (inchange).
+float32 waypoint_duration 2.0
 float32 approach_duration 2.0
 float32 squeeze_duration 1.5
 float32 lift_duration 3.0

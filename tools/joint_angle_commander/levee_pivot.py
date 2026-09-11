@@ -56,6 +56,7 @@ from motion_state import ensure_motion_state
 from levee import (
     LEFT_CHAIN, RIGHT_CHAIN, HAND_OFFSET_LEFT, HAND_OFFSET_RIGHT,
     LEFT_JOINT_INDICES, RIGHT_JOINT_INDICES, Q_LEFT_HOME, Q_RIGHT_HOME,
+    WAYPOINT_Q_LEFT, WAYPOINT_Q_RIGHT, WAYPOINT_DURATION,
     PINCH_X, PINCH_Y, SQUEEZE_Y, LIFT_Z, APPROACH_DURATION, SQUEEZE_DURATION,
     LIFT_DURATION, HOLD_SECONDS, RATE_HZ, WALK_STANCE_SCALE,
     WALK_STANCE_STIFFNESS_SCALE, WALK_STANCE_DURATION, LEVEE_STIFFNESS,
@@ -64,6 +65,9 @@ from levee import (
     _publish, move_arms, ease,
 )
 from pivot_real import WAIST_JOINT_INDEX, WAIST_KP, WAIST_KD, _ease as _pivot_ease
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "robot_arm_ik"))
+from lift_carton import mirror_left_to_right
 
 
 def run_depose_phase(lever, qL, qR, pinch_x, pinch_y, squeeze_y, pinch_z, lift_z,
@@ -92,9 +96,7 @@ def run_depose_phase(lever, qL, qR, pinch_x, pinch_y, squeeze_y, pinch_z, lift_z
         qL = _solve_ik_locked_wrist(LEFT_CHAIN, HAND_OFFSET_LEFT,
                                      _rotate_xy([pinch_x, squeeze_y, z], pinch_yaw_offset),
                                      qL, wrist_rotation, iters=30)
-        qR = _solve_ik_locked_wrist(RIGHT_CHAIN, HAND_OFFSET_RIGHT,
-                                     _rotate_xy([pinch_x, -squeeze_y, z], pinch_yaw_offset),
-                                     qR, -wrist_rotation, iters=30)
+        qR = mirror_left_to_right(qL)
         if dry_run:
             if i in (0, n):
                 print(f"    [dry-run] t={i / RATE_HZ:.2f}s  qL={np.round(qL, 4)}  qR={np.round(qR, 4)}")
@@ -107,9 +109,7 @@ def run_depose_phase(lever, qL, qR, pinch_x, pinch_y, squeeze_y, pinch_z, lift_z
     q_open_L = _solve_ik_locked_wrist(LEFT_CHAIN, HAND_OFFSET_LEFT,
                                        _rotate_xy([pinch_x, pinch_y, pinch_z], pinch_yaw_offset),
                                        qL, wrist_rotation)
-    q_open_R = _solve_ik_locked_wrist(RIGHT_CHAIN, HAND_OFFSET_RIGHT,
-                                       _rotate_xy([pinch_x, -pinch_y, pinch_z], pinch_yaw_offset),
-                                       qR, -wrist_rotation)
+    q_open_R = mirror_left_to_right(q_open_L)
     qL, qR = move_arms(lever, qL, q_open_L, qR, q_open_R, open_duration, dry_run=dry_run)
 
     _checkpoint(f"degagement -- retour bras home ({retreat_duration:.1f}s)", confirm)
@@ -136,14 +136,11 @@ def run_lift_and_pivot(node, lever, args):
 
     q_pinch_L = _solve_ik_locked_wrist(LEFT_CHAIN, HAND_OFFSET_LEFT,
                                         _rotate_xy([PINCH_X, PINCH_Y, args.pinch_z], args.pinch_yaw_offset),
-                                        Q_LEFT_HOME, wrist_rotation)
-    q_pinch_R = _solve_ik_locked_wrist(RIGHT_CHAIN, HAND_OFFSET_RIGHT,
-                                        _rotate_xy([PINCH_X, -PINCH_Y, args.pinch_z], args.pinch_yaw_offset),
-                                        Q_RIGHT_HOME, -wrist_rotation)
+                                        WAYPOINT_Q_LEFT, wrist_rotation)
+    q_pinch_R = mirror_left_to_right(q_pinch_L)
     squeeze_L = _rotate_xy([PINCH_X, SQUEEZE_Y, args.pinch_z], args.pinch_yaw_offset)
-    squeeze_R = _rotate_xy([PINCH_X, -SQUEEZE_Y, args.pinch_z], args.pinch_yaw_offset)
     q_squeeze_L = _solve_ik_locked_wrist(LEFT_CHAIN, HAND_OFFSET_LEFT, squeeze_L, q_pinch_L, wrist_rotation)
-    q_squeeze_R = _solve_ik_locked_wrist(RIGHT_CHAIN, HAND_OFFSET_RIGHT, squeeze_R, q_pinch_R, -wrist_rotation)
+    q_squeeze_R = mirror_left_to_right(q_squeeze_L)
 
     run_approche = args.only_phase in (None, "approche")
     run_serrage = args.only_phase in (None, "serrage")
@@ -170,8 +167,12 @@ def run_lift_and_pivot(node, lever, args):
             time.sleep(2.0)
 
     if run_approche:
+        _checkpoint(f"point de passage -- coudes vers l'arriere, {WAYPOINT_DURATION:.1f}s", confirm)
+        qL, qR = move_arms(lever, Q_LEFT_HOME, WAYPOINT_Q_LEFT, Q_RIGHT_HOME, WAYPOINT_Q_RIGHT,
+                            WAYPOINT_DURATION, dry_run=args.dry_run)
+
         _checkpoint(f"approche -- mains vers pinch, {APPROACH_DURATION:.1f}s", confirm)
-        qL, qR = move_arms(lever, Q_LEFT_HOME, q_pinch_L, Q_RIGHT_HOME, q_pinch_R,
+        qL, qR = move_arms(lever, WAYPOINT_Q_LEFT, q_pinch_L, WAYPOINT_Q_RIGHT, q_pinch_R,
                             APPROACH_DURATION, dry_run=args.dry_run)
 
     if run_serrage:
@@ -194,9 +195,7 @@ def run_lift_and_pivot(node, lever, args):
             qL = _solve_ik_locked_wrist(LEFT_CHAIN, HAND_OFFSET_LEFT,
                                          _rotate_xy([PINCH_X, SQUEEZE_Y, z], args.pinch_yaw_offset),
                                          qL, wrist_rotation, iters=30)
-            qR = _solve_ik_locked_wrist(RIGHT_CHAIN, HAND_OFFSET_RIGHT,
-                                         _rotate_xy([PINCH_X, -SQUEEZE_Y, z], args.pinch_yaw_offset),
-                                         qR, -wrist_rotation, iters=30)
+            qR = mirror_left_to_right(qL)
             if args.dry_run:
                 if i in (0, n):
                     print(f"    [dry-run] t={i / RATE_HZ:.2f}s  qL={np.round(qL, 4)}  qR={np.round(qR, 4)}")
@@ -265,9 +264,7 @@ def run_lift_and_pivot(node, lever, args):
             qL = _solve_ik_locked_wrist(LEFT_CHAIN, HAND_OFFSET_LEFT,
                                          _rotate_xy([PINCH_X, SQUEEZE_Y, z], args.pinch_yaw_offset),
                                          qL, wrist_rotation, iters=30)
-            qR = _solve_ik_locked_wrist(RIGHT_CHAIN, HAND_OFFSET_RIGHT,
-                                         _rotate_xy([PINCH_X, -SQUEEZE_Y, z], args.pinch_yaw_offset),
-                                         qR, -wrist_rotation, iters=30)
+            qR = mirror_left_to_right(qL)
             if args.dry_run:
                 if i in (0, n3):
                     print(f"    [dry-run] t={i / RATE_HZ:.2f}s  qL={np.round(qL, 4)}  qR={np.round(qR, 4)}")
@@ -280,9 +277,7 @@ def run_lift_and_pivot(node, lever, args):
     q_open_L = _solve_ik_locked_wrist(LEFT_CHAIN, HAND_OFFSET_LEFT,
                                        _rotate_xy([PINCH_X, PINCH_Y, drop_z], args.pinch_yaw_offset),
                                        qL, wrist_rotation)
-    q_open_R = _solve_ik_locked_wrist(RIGHT_CHAIN, HAND_OFFSET_RIGHT,
-                                       _rotate_xy([PINCH_X, -PINCH_Y, drop_z], args.pinch_yaw_offset),
-                                       qR, -wrist_rotation)
+    q_open_R = mirror_left_to_right(q_open_L)
     qL, qR = move_arms(lever, qL, q_open_L, qR, q_open_R, args.open_duration, dry_run=args.dry_run)
 
     # 2026-09-10, sur demande utilisateur (les bras tendus retraversaient l'espace ou

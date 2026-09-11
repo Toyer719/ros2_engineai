@@ -63,7 +63,7 @@ from motion_state import ensure_motion_state
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "robot_arm_ik"))
 from lift_carton import (
     LEFT_CHAIN, RIGHT_CHAIN, HAND_OFFSET_LEFT, HAND_OFFSET_RIGHT, solve_ik, ease,
-    forward_kinematics,
+    forward_kinematics, mirror_left_to_right,
 )
 
 LEFT_JOINT_INDICES = [13, 14, 15, 16, 17]
@@ -71,6 +71,9 @@ RIGHT_JOINT_INDICES = [18, 19, 20, 21, 22]
 
 Q_LEFT_HOME = np.array([0.000879, 0.075284, -0.000233, -0.126397, -0.000033])
 Q_RIGHT_HOME = np.array([0.000885, -0.075161, 0.000241, -0.126390, 0.000033])
+
+WAYPOINT_Q_LEFT = np.radians([30.0, 5.0, 0.0, -110.0, 0.0])
+WAYPOINT_Q_RIGHT = np.radians([30.0, -5.0, 0.0, -110.0, 0.0])
 
 # Posture jambes flechies (2026-09-03, port depuis lift.py/simu -- jamais teste sur le robot
 # reel avant ce jour). Memes indices/angles mesures que cote simu.
@@ -100,7 +103,13 @@ PINCH_X = 0.216           # 2026-08-27 : recalibre pour un placement du robot a 
                            # valider par --only-phase approche avant d'enchainer serrage/levee.
 PINCH_Y = 0.22            # ecart Y avant serrage (demi-largeur carton = 0.0955m) -- aligne sur la
                            # valeur validee en simu le 2026-08-27 (etait 0.28)
-SQUEEZE_Y = 0.110         # 2026-09-10, demande explicite utilisateur ("large pour y aller a
+SQUEEZE_Y = 0.13          # 2026-09-11 : observe en direct sur le robot reel ("va serrer trop
+                          # fort" pendant l'approche) -- le carton actuellement sur la table
+                          # semble avoir une demi-largeur REELLE plus petite que celle supposee
+                          # ici (0.0955m) -- elargi par prudence en attendant une mesure directe.
+                          # A resserrer progressivement via --only-phase serrage si trop large
+                          # (pas de contact), jamais un grand saut vers le bas.
+                          # 2026-09-10, demande explicite utilisateur ("large pour y aller a
                           # tatillon") apres que 0.095 (0.5mm de compression nominale
                           # seulement) ait ete juge encore trop ferme. AU-DELA de la
                           # demi-largeur reelle du carton (0.0955m) -- verifie en git log/
@@ -149,6 +158,8 @@ APPROACH_DURATION = 3.5      # 2026-09-10 : etait 5.0 -- premiere sequence compl
                               # incident sur le robot reel a 5.0/5.0/6.0, jugee "tres lente"
                               # -- accelere modere (~30-40%), PAS retour a 4.0 (deja juge
                               # trop rapide le 09/09, cf commentaire d'origine ci-dessous).
+WAYPOINT_DURATION = 3.5      # point de passage coudes-vers-l'arriere avant l'approche, meme
+                              # rythme que APPROACH_DURATION.
 SQUEEZE_DURATION = 3.5       # 2026-09-10 : etait 5.0, meme reduction moderee.
 LIFT_DURATION = 4.0          # 2026-09-10 : etait 6.0, meme reduction moderee.
 # 2026-09-09 (historique) : ces 3 valeurs etaient a 4.0/4.0/5.0, ralenties suite a un
@@ -222,7 +233,8 @@ def _rotate_xy(point, yaw_offset):
     return np.array([x * c - y * s, x * s + y * c, z])
 
 
-def _solve_ik_locked_wrist(chain, hand_offset, target, q_init, last_angle, iters=200, damping=0.05):
+def _solve_ik_locked_wrist(chain, hand_offset, target, q_init, last_angle, iters=200, damping=0.05,
+                            null_space_gain=0.2, null_space_pref=None):
     """Comme solve_ik (lift_carton.py) mais fige le DERNIER angle du chain (ELBOW_YAW,
     poignet) a `last_angle` et ne resout la position qu'avec les 4 AUTRES articulations.
     solve_ik normal laisse les 2 DDL redondants du chain a 5 joints/3 DDL de position au
@@ -230,9 +242,20 @@ def _solve_ik_locked_wrist(chain, hand_offset, target, q_init, last_angle, iters
     le poignet a toutes les distances (cf. commentaire dans run_lift_sequence). Verifie
     numeriquement (hors robot) : erreur de position ~3e-8 sur les 4 cibles pince/serrage
     gauche/droite a PINCH_X=0.216, poignet exactement a l'angle demande, tous les joints
-    dans la limite mecanique +-150deg."""
+    dans la limite mecanique +-150deg.
+
+    2026-09-11 : ajout de null_space_gain/null_space_pref -- avec le poignet fige, il reste
+    encore 1 DDL redondant (3 equations de position, 4 inconnues) : SANS regularisation, le
+    COUDE peut rester replie pres de sa valeur de depart (ex. -110deg, herite du point de
+    passage) meme quand la main atteint deja la bonne position -- constate sur le robot reel
+    ("le bras vise vers le haut au lieu de face a lui"), meme cause que le bug deja corrige
+    cote simu (lift_carton.py::solve_arm_ik) sur un AUTRE joint fige (le coude, pas le
+    poignet, la ou solve_ik_locked_wrist fige le poignet). Rappel vers null_space_pref
+    (par defaut q_init) dans le noyau du Jacobien -- ne change PAS la position finale de la
+    main, seulement quelle solution redondante est choisie parmi celles qui l'atteignent."""
     q = q_init.copy()
     q[-1] = last_angle
+    q_pref = q_init.copy() if null_space_pref is None else null_space_pref.copy()
     n_free = len(q) - 1
     for _ in range(iters):
         p0 = forward_kinematics(chain, hand_offset, q)
@@ -245,7 +268,11 @@ def _solve_ik_locked_wrist(chain, hand_offset, target, q_init, last_angle, iters
             dq[i] += 1e-6
             J[:, i] = (forward_kinematics(chain, hand_offset, dq) - p0) / 1e-6
         JJt = J @ J.T + damping ** 2 * np.eye(3)
-        step = J.T @ np.linalg.solve(JJt, error)
+        J_pinv = J.T @ np.linalg.inv(JJt)
+        step = J_pinv @ error
+        if null_space_gain:
+            null_proj = np.eye(n_free) - J_pinv @ J
+            step = step + null_space_gain * (null_proj @ (q_pref[:n_free] - q[:n_free]))
         q[:n_free] = q[:n_free] + step
         q[-1] = last_angle
     return q
@@ -329,7 +356,7 @@ def move_arms(lever, qL0, qL1, qR0, qR1, duration, dry_run=False):
 
 def _build_arg_parser():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--pinch-z", type=float, default=0.106,
+    parser.add_argument("--pinch-z", type=float, default=0.05,
                          help="2026-09-09 : podium reel remesure a 0.8m de haut (etait 0.535m) "
                               "-- calcul d'origine : carton a 0.8+0.146=0.946m (monde), bassin "
                               "pd_stand ~0.82m -> pinch_z=+0.126. Baisse a +0.106 (essai reel : "
@@ -389,16 +416,13 @@ def run_lift_sequence(node, lever, args):
     q_pinch_L = _solve_ik_locked_wrist(LEFT_CHAIN, HAND_OFFSET_LEFT,
                                         _rotate_xy([PINCH_X, PINCH_Y, args.pinch_z], args.pinch_yaw_offset),
                                         Q_LEFT_HOME, wrist_rotation)
-    q_pinch_R = _solve_ik_locked_wrist(RIGHT_CHAIN, HAND_OFFSET_RIGHT,
-                                        _rotate_xy([PINCH_X, -PINCH_Y, args.pinch_z], args.pinch_yaw_offset),
-                                        Q_RIGHT_HOME, -wrist_rotation)
+    q_pinch_R = mirror_left_to_right(q_pinch_L)
     print(f"[DEBUG] poignet -- qL[-1]={np.degrees(q_pinch_L[-1]):.1f}deg "
           f"qR[-1]={np.degrees(q_pinch_R[-1]):.1f}deg (limite mecanique : +-150deg)")
 
     squeeze_L = _rotate_xy([PINCH_X, SQUEEZE_Y, args.pinch_z], args.pinch_yaw_offset)
-    squeeze_R = _rotate_xy([PINCH_X, -SQUEEZE_Y, args.pinch_z], args.pinch_yaw_offset)
     q_squeeze_L = _solve_ik_locked_wrist(LEFT_CHAIN, HAND_OFFSET_LEFT, squeeze_L, q_pinch_L, wrist_rotation)
-    q_squeeze_R = _solve_ik_locked_wrist(RIGHT_CHAIN, HAND_OFFSET_RIGHT, squeeze_R, q_pinch_R, -wrist_rotation)
+    q_squeeze_R = mirror_left_to_right(q_squeeze_L)
 
     run_approche = args.only_phase in (None, "approche")
     run_serrage = args.only_phase in (None, "serrage")
@@ -413,11 +437,18 @@ def run_lift_sequence(node, lever, args):
 
     if run_approche:
         _checkpoint(
+            f"point de passage -- coudes vers l'arriere, {WAYPOINT_DURATION}s",
+            confirm,
+        )
+        qL, qR = move_arms(lever, Q_LEFT_HOME, WAYPOINT_Q_LEFT, Q_RIGHT_HOME, WAYPOINT_Q_RIGHT,
+                            WAYPOINT_DURATION, dry_run=args.dry_run)
+
+        _checkpoint(
             f"approche -- mains vers pinch (x={PINCH_X} y=+-{PINCH_Y} z={args.pinch_z}, "
             f"poignet pivote de {np.degrees(wrist_rotation):.0f}deg), {APPROACH_DURATION}s",
             confirm,
         )
-        qL, qR = move_arms(lever, Q_LEFT_HOME, q_pinch_L, Q_RIGHT_HOME, q_pinch_R,
+        qL, qR = move_arms(lever, WAYPOINT_Q_LEFT, q_pinch_L, WAYPOINT_Q_RIGHT, q_pinch_R,
                             APPROACH_DURATION, dry_run=args.dry_run)
 
     if run_serrage:
@@ -447,9 +478,7 @@ def run_lift_sequence(node, lever, args):
             qL_prev = _solve_ik_locked_wrist(LEFT_CHAIN, HAND_OFFSET_LEFT,
                                               _rotate_xy([PINCH_X, SQUEEZE_Y, z], args.pinch_yaw_offset),
                                               qL_prev, wrist_rotation, iters=30)
-            qR_prev = _solve_ik_locked_wrist(RIGHT_CHAIN, HAND_OFFSET_RIGHT,
-                                              _rotate_xy([PINCH_X, -SQUEEZE_Y, z], args.pinch_yaw_offset),
-                                              qR_prev, -wrist_rotation, iters=30)
+            qR_prev = mirror_left_to_right(qL_prev)
             if args.dry_run:
                 if i in (0, n):
                     print(f"    [dry-run] t={i/RATE_HZ:.2f}s  qL={np.round(qL_prev, 4)}  qR={np.round(qR_prev, 4)}")

@@ -22,6 +22,14 @@
          (centre carton) desormais AU-DESSUS du bassin pd_stand (~0.82m) au lieu d'en
          dessous -- voir PINCH_Z dans chef_node.py/levee.py, jamais teste avec cette
          geometrie. -->
+    <!-- 2026-09-10 : essai carton DEBORDANT du podium (7.25cm) pour reduire la portee
+         de bras necessaire -- ABANDONNE le 2026-09-11 sur demande explicite de
+         l'utilisateur ("remets le carton bien dans la scene, ne deborde plus"). Le
+         probleme du bras qui touche le podium pendant la levee/le pivot est desormais
+         attaque cote TRAJECTOIRE du bras (point de passage "coudes vers l'arriere"
+         dans lift.py/depose.py), pas cote geometrie de la scene. Carton remis A RAS
+         du bord du podium (carton_front == podium_front == 1.6325), PROVEN_PINCH_X
+         remis a 0.345 dans chef_node.py (valeur qui atteint bien cette position). -->
     <worldbody>
         <body name="podium" pos="2.0875 0.0 0.4">
             <geom name="podium_block" type="box" size="0.455 0.355 0.4" mass="20"

@@ -13,8 +13,12 @@ from lever import Lever
 
 sys.path.insert(0, "/home/equansrobotic/stagiaire_1/tools/robot_arm_ik")
 from lift_carton import (
-    LEFT_CHAIN, RIGHT_CHAIN, HAND_OFFSET_LEFT, HAND_OFFSET_RIGHT, solve_ik, ease,
+    LEFT_CHAIN, RIGHT_CHAIN, HAND_OFFSET_LEFT, HAND_OFFSET_RIGHT, solve_ik,
+    solve_arm_ik, ease, carton_face_centers, SimStateListener, world_to_robot_local,
+    SQUEEZE_OFFSET_Y, mirror_left_to_right,
 )
+
+ELBOW_PITCH_CHAIN_INDEX = 3  # voir lift_carton.py::solve_arm_ik (lock_index)
 
 from virtual_gamepad_interfaces.action import Pivot
 
@@ -34,6 +38,18 @@ LEG_INDICES = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
 
 Q_LEFT_HOME = np.array([0.000879, 0.075284, -0.000233, -0.126397, -0.000033])
 Q_RIGHT_HOME = np.array([0.000885, -0.075161, 0.000241, -0.126390, 0.000033])
+
+# 2026-09-11 : meme valeurs que lift.py/depose.py (posture "coudes vers
+# l'arriere" validee -- voir leur docstring). Utilisee ici comme SEED pour
+# l'IK du carton tenu, PAS pour bouger physiquement les bras vers ce point
+# de passage (pivot.py ne le fait jamais lui-meme) -- juste pour que le
+# solveur converge vers une posture PROCHE de celle que lift.py tenait
+# reellement, au lieu de Q_LEFT_HOME (posture de REPOS, tres differente
+# d'un bras tendu vers le carton) qui faisait deriver l'epaule vers une
+# orientation visiblement differente au relais (constate par l'utilisateur :
+# "les bras pivotent... il y a 2 fois un serrage").
+WAYPOINT_Q_LEFT = np.radians([30.0, 5.0, 0.0, -110.0, 0.0])
+WAYPOINT_Q_RIGHT = np.radians([30.0, -5.0, 0.0, -110.0, 0.0])
 
 LEFT_HIP_PITCH_INDEX = 0
 RIGHT_HIP_PITCH_INDEX = 6
@@ -69,6 +85,7 @@ class PivotActionServer(Node):
     def __init__(self):
         super().__init__("pivot")
         self._lever = None
+        self._sim_state = None
         self._server = ActionServer(
             self, Pivot, "pivot", self._execute, cancel_callback=self._on_cancel,
         )
@@ -83,6 +100,23 @@ class PivotActionServer(Node):
             )
             self._lever = Lever(self, subscriber_timeout=10.0)
         return self._lever
+
+    def _ensure_sim_state(self) -> SimStateListener:
+        """2026-09-11 : meme pattern que lift.py -- pivot.py est un process
+        SEPARE (son propre Lever), il doit RECALCULER la position tenue plutot
+        que de dependre d'une valeur pinch_x/pinch_y STATIQUE passee par
+        chef_node.py (bug reel trouve : l'ancienne version utilisait
+        g.pinch_x=PROVEN_PINCH_X fige, different de ce que lift.py avait
+        REELLEMENT atteint dynamiquement -- saut visible au relais, remarque
+        par l'utilisateur ("il vise vers le centre... pas ce que je veux"))."""
+        if self._sim_state is None:
+            self._sim_state = SimStateListener()
+            if not self._sim_state.wait_for_first_message(5.0):
+                raise RuntimeError(
+                    "Aucun message sur le canal LCM 'sim_state' apres 5s -- "
+                    "run_mujoco.sh actif ?"
+                )
+        return self._sim_state
 
     def _publish_pose(self, lever, qL, qR, waist_angle, leg_targets, stiffness_scale):
         """Republie EN UN SEUL message (via Lever, qui agrege tout ce qui a
@@ -108,14 +142,49 @@ class PivotActionServer(Node):
             result.success = False
             return result
 
-        pinch_L = _rotate_xy([g.pinch_x, g.pinch_y, g.pinch_z], g.pinch_yaw_offset)
-        pinch_R = _rotate_xy([g.pinch_x, -g.pinch_y, g.pinch_z], g.pinch_yaw_offset)
-        q_pinch_L = solve_ik(LEFT_CHAIN, HAND_OFFSET_LEFT, pinch_L, Q_LEFT_HOME)
-        q_pinch_R = solve_ik(RIGHT_CHAIN, HAND_OFFSET_RIGHT, pinch_R, Q_RIGHT_HOME)
-        squeeze_L = _rotate_xy([g.pinch_x, g.squeeze_y, g.pinch_z], g.pinch_yaw_offset)
-        squeeze_R = _rotate_xy([g.pinch_x, -g.squeeze_y, g.pinch_z], g.pinch_yaw_offset)
-        q_squeeze_L = solve_ik(LEFT_CHAIN, HAND_OFFSET_LEFT, squeeze_L, q_pinch_L)
-        q_squeeze_R = solve_ik(RIGHT_CHAIN, HAND_OFFSET_RIGHT, squeeze_R, q_pinch_R)
+        # 2026-09-11 : position tenue RECALCULEE dynamiquement (centre reel des
+        # faces du carton, meme technique que lift.py -- carton_face_centers()
+        # + world_to_robot_local() avec la pose ACTUELLE du robot) au lieu des
+        # anciennes cibles g.pinch_x/g.pinch_y/g.squeeze_y STATIQUES -- bug reel
+        # trouve : pivot.py (process separe, propre Lever) recalculait depuis
+        # Q_HOME avec des valeurs figees, differentes de ce que lift.py avait
+        # REELLEMENT atteint -- saut visible au relais entre les deux nodes.
+        try:
+            sim_state = self._ensure_sim_state()
+        except RuntimeError as exc:
+            self.get_logger().error(f"pivot : {exc}")
+            goal_handle.abort()
+            result.success = False
+            return result
+        pose = sim_state.pose()
+        if pose is None:
+            self.get_logger().error("pivot : aucune pose sim_state disponible -- abandon.")
+            goal_handle.abort()
+            result.success = False
+            return result
+        face_gauche_monde, face_droite_monde = carton_face_centers()
+        pinch_L = world_to_robot_local(face_gauche_monde, pose)
+        pinch_R = world_to_robot_local(face_droite_monde, pose)
+        # 2026-09-11 : lift.py serre desormais de SQUEEZE_OFFSET_Y au-dela de
+        # la surface (voir lift.py) -- pivot.py doit tenir la MEME position
+        # serree (pas juste le centre de face) pour ne pas relacher la prise
+        # au relais lift -> pivot.
+        pinch_L = np.array([pinch_L[0], pinch_L[1] - SQUEEZE_OFFSET_Y, g.lift_z])
+        pinch_R = np.array([pinch_R[0], pinch_R[1] + SQUEEZE_OFFSET_Y, g.lift_z])
+        # 2026-09-11 : solve_arm_ik (coude fige + regularisation null-space)
+        # au lieu de solve_ik standard -- sinon ce process (pivot.py, propre
+        # Lever) recalcule une posture INDEPENDANTE de celle que lift.py
+        # tenait reellement (meme position XYZ, mais coude/epaule
+        # potentiellement tres differents, cf solve_ik = "solution la plus
+        # proche du seed" et le seed ici etait Q_LEFT_HOME, PAS la posture
+        # coude-tendu de lift.py) -- saut brutal au relais, prise
+        # asymetrique/desequilibree et geste sec au relachement (constate
+        # par l'utilisateur : "le carton n'est pas equilibre... il lance le
+        # carton"). Meme convention que lift.py partout desormais.
+        q_squeeze_L = solve_arm_ik(LEFT_CHAIN, HAND_OFFSET_LEFT, pinch_L, WAYPOINT_Q_LEFT,
+                                    lock_index=ELBOW_PITCH_CHAIN_INDEX,
+                                    lock_angle=Q_LEFT_HOME[ELBOW_PITCH_CHAIN_INDEX])
+        q_squeeze_R = mirror_left_to_right(q_squeeze_L)
 
         leg_targets = [
             (idx, target * g.walk_stance_scale, kp, kd) for idx, target, kp, kd in LEG_JOINTS
@@ -162,35 +231,21 @@ class PivotActionServer(Node):
         # Marge shoulder-roll a RETRACT_PINCH_X=0.20 verifiee (solve_ik) a
         # hauteur lift_z (~13deg) ; PAS reverifiee a hauteur pinch_z (plus
         # basse, marge attendue egale ou meilleure mais pas calculee).
+        # 2026-09-11 : X/Y de depart = pinch_L/pinch_R (position dynamique
+        # REELLEMENT tenue) au lieu de g.pinch_x/g.squeeze_y figes -- meme
+        # raison que le fix ci-dessus (pas de saut au relais).
         RETRACT_PINCH_X = 0.20
+        q_retract_start_L = q_squeeze_L.copy()
         n_retract = max(1, int(1.0 * 30))
         for i in range(n_retract + 1):
             a = ease(i / n_retract)
-            x = g.pinch_x + a * (RETRACT_PINCH_X - g.pinch_x)
-            q_squeeze_L = solve_ik(LEFT_CHAIN, HAND_OFFSET_LEFT,
-                                    _rotate_xy([x, g.squeeze_y, g.pinch_z], g.pinch_yaw_offset),
-                                    q_squeeze_L, iters=30)
-            q_squeeze_R = solve_ik(RIGHT_CHAIN, HAND_OFFSET_RIGHT,
-                                    _rotate_xy([x, -g.squeeze_y, g.pinch_z], g.pinch_yaw_offset),
-                                    q_squeeze_R, iters=30)
-            self._publish_pose(lever, q_squeeze_L, q_squeeze_R, 0.0,
-                                leg_targets, g.walk_stance_stiffness_scale)
-            time.sleep(1.0 / 30)
-
-        self.get_logger().info(
-            f"levee -- {g.pinch_z:.3f}m -> {g.lift_z:.3f}m (carton deja rapproche, "
-            f"pinch_x={RETRACT_PINCH_X:.2f}m)"
-        )
-        n_lift = max(1, int(3.0 * 30))
-        for i in range(n_lift + 1):
-            a = ease(i / n_lift)
-            z = g.pinch_z + a * (g.lift_z - g.pinch_z)
-            q_squeeze_L = solve_ik(LEFT_CHAIN, HAND_OFFSET_LEFT,
-                                    _rotate_xy([RETRACT_PINCH_X, g.squeeze_y, z], g.pinch_yaw_offset),
-                                    q_squeeze_L, iters=30)
-            q_squeeze_R = solve_ik(RIGHT_CHAIN, HAND_OFFSET_RIGHT,
-                                    _rotate_xy([RETRACT_PINCH_X, -g.squeeze_y, z], g.pinch_yaw_offset),
-                                    q_squeeze_R, iters=30)
+            x = pinch_L[0] + a * (RETRACT_PINCH_X - pinch_L[0])
+            q_squeeze_L = solve_arm_ik(LEFT_CHAIN, HAND_OFFSET_LEFT,
+                                        np.array([x, pinch_L[1], pinch_L[2]]),
+                                        q_squeeze_L, lock_index=ELBOW_PITCH_CHAIN_INDEX,
+                                        lock_angle=Q_LEFT_HOME[ELBOW_PITCH_CHAIN_INDEX], iters=30,
+                                        null_space_pref=q_retract_start_L)
+            q_squeeze_R = mirror_left_to_right(q_squeeze_L)
             self._publish_pose(lever, q_squeeze_L, q_squeeze_R, 0.0,
                                 leg_targets, g.walk_stance_stiffness_scale)
             time.sleep(1.0 / 30)

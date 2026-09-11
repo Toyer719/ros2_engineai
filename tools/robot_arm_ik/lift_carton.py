@@ -28,12 +28,15 @@ SIMULATION MUJOCO UNIQUEMENT -- aucune commande envoyee au robot reel.
 """
 
 import argparse
+import math
 import os
 import re
 import sys
 import tempfile
+import threading
 import time
 
+import lcm
 import numpy as np
 
 try:
@@ -60,6 +63,154 @@ CARTON_XY = (1.8, 0.0)
 # (demi-hauteur reelle 0.146m, contre 0.15 avant -- quasi identique) repose
 # sur le podium (surface a z=0.65) -- 0.65+0.146=0.796.
 CARTON_Z = 0.796
+# 2026-09-11 : CARTON_XY/CARTON_Z ci-dessus sont des constantes FIGEES, perimees
+# (scene live actuelle : x=1.77, z=0.946 -- voir carton_face_centers() plus bas)
+# -- gardees pour ne pas casser build_dynamic_scene() (outil de calibrage IK hors
+# ligne, sa propre scene generee, sans rapport avec la scene live de run_mujoco.sh).
+# NE PAS s'en servir pour un calcul touchant la scene VIVANTE, utiliser
+# carton_face_centers() a la place (lit le XML live a chaque appel, jamais perime).
+
+LIVE_SCENE_XML = "/home/equansrobotic/engineai_robotics_native_sdk/assets/resource/pm01_edu_carton.xml"
+
+SQUEEZE_OFFSET_Y = 0.010
+
+
+def carton_face_centers(scene_xml=LIVE_SCENE_XML):
+    """Coordonnees X,Y,Z (metres, REPERE MONDE) du centre des faces GAUCHE et
+    DROITE du carton, lues directement dans le XML de la scene VIVANTE (celle
+    que charge run_mujoco.sh) -- jamais perime, contrairement a une constante
+    recopiee a la main (cf. CARTON_XY/CARTON_Z ci-dessus, ou le piege deja
+    rencontre avec shadow_scene.CARTON_POS, voir memoire projet).
+
+    Repere MuJoCo de ce projet (verifiable directement dans le XML) :
+      - <body pos="x y z"> = position MONDE (les bodies podium/carton sont des
+        enfants DIRECTS de <worldbody>, aucune imbrication -- pas de transform
+        supplementaire a appliquer).
+      - Un geom type="box" a un size="dx dy dz" = DEMI-dimensions locales (pas
+        la taille totale) le long de X,Y,Z -- confirme en comparant a la taille
+        REELLE connue du carton (275x191x292mm) : X=0.1375*2=275mm (profondeur),
+        Y=0.0955*2=191mm (largeur), Z=0.146*2=292mm (hauteur).
+      - +X = vers l'avant (direction dans laquelle le robot marche, deja
+        confirme par toute la telemetrie sim_state de ce projet).
+      - +Z = vers le haut (deja confirme partout : ~0.82m debout, ~0.08-0.1m
+        tombe au sol).
+      - +Y = vers la GAUCHE du robot (meme convention que pinch_y partout
+        ailleurs dans ce projet : bras gauche vise +pinch_y, bras droit
+        vise -pinch_y).
+    Le carton n'a aucune rotation dans la scene (pas de quat/euler dans son
+    <body>) -- ses faces gauche/droite sont donc exactement a Y = cy +- sy,
+    memes X/Z que le centre du carton.
+
+    Retourne (face_gauche, face_droite), chacune un np.array([x, y, z]) en
+    repere MONDE -- PAS encore le repere du bassin du robot (pinch_x/y/z) : il
+    faudrait encore soustraire la position du bassin (sim_state.
+    base_link_position) et faire tourner par son quaternion pour obtenir une
+    cible IK utilisable telle quelle (le robot ne regarde pas forcement le
+    carton exactement de face)."""
+    src = open(scene_xml).read()
+    m = re.search(r'<body name="carton" pos="([^"]+)"', src)
+    if not m:
+        raise RuntimeError(f"Body 'carton' introuvable dans {scene_xml}.")
+    cx, cy, cz = (float(v) for v in m.group(1).split())
+    m = re.search(r'<geom name="carton_box"[^>]*\bsize="([^"]+)"', src)
+    if not m:
+        raise RuntimeError(f"Geom 'carton_box' introuvable dans {scene_xml}.")
+    sx, sy, sz = (float(v) for v in m.group(1).split())
+    face_gauche = np.array([cx, cy + sy, cz])
+    face_droite = np.array([cx, cy - sy, cz])
+    return face_gauche, face_droite
+
+
+SIM_LCM_URL = "udpm://239.255.76.67:7667?ttl=1"
+SIM_STATE_CHANNEL = "sim_state"
+
+
+def _yaw_from_quaternion(w, x, y, z):
+    """Cap (rotation autour de Z) a partir du quaternion (w,x,y,z) de
+    base_link_quaternion -- copie de walk_to_xy.py::_yaw_from_quaternion (meme
+    convention MuJoCo w,x,y,z que qpos)."""
+    siny_cosp = 2.0 * (w * z + x * y)
+    cosy_cosp = 1.0 - 2.0 * (y * y + z * z)
+    return math.atan2(siny_cosp, cosy_cosp)
+
+
+class SimStateListener:
+    """S'abonne au canal LCM `sim_state` (verite terrain MuJoCo) et garde le
+    dernier message recu -- copie autonome de walk_to_xy.py::SimStateListener
+    (evite d'importer walk_to_xy.py en entier, qui tire aussi gamepad_api.py).
+    N'existe et ne fonctionne qu'avec la SIMULATION en cours d'execution."""
+
+    def __init__(self, lcm_url=SIM_LCM_URL):
+        sys.path.insert(0, "/home/equansrobotic/engineai_robotics_native_sdk/tools/virtual_gamepad")
+        from lcm_msgs.data import SimState
+        self._SimState = SimState
+        self._lc = lcm.LCM(lcm_url)
+        self._lc.subscribe(SIM_STATE_CHANNEL, self._on_message)
+        self._latest = None
+        self._lock = threading.Lock()
+        self._thread = threading.Thread(target=self._spin, daemon=True)
+        self._thread.start()
+
+    def _on_message(self, channel, data):
+        state = self._SimState.decode(data)
+        with self._lock:
+            self._latest = state
+
+    def _spin(self):
+        while True:
+            self._lc.handle()
+
+    def wait_for_first_message(self, timeout=5.0):
+        t0 = time.time()
+        while time.time() - t0 < timeout:
+            with self._lock:
+                if self._latest is not None:
+                    return True
+            time.sleep(0.05)
+        return False
+
+    def pose(self):
+        """(x, y, z, yaw) courants du bassin, en repere MONDE, ou None si aucun
+        message recu."""
+        with self._lock:
+            state = self._latest
+        if state is None:
+            return None
+        x, y, z = state.base_link_position
+        w, qx, qy, qz = state.base_link_quaternion
+        return x, y, z, _yaw_from_quaternion(w, qx, qy, qz)
+
+
+def world_to_robot_local(world_point, base_pose):
+    """Convertit un point 3D en repere MONDE vers le repere LOCAL du bassin du
+    robot (celui utilise par pinch_x/pinch_y/pinch_z, HAND_OFFSET_LEFT/RIGHT et
+    LEFT_CHAIN/RIGHT_CHAIN partout ailleurs dans ce fichier) -- c'est
+    l'operation INVERSE de _rotate_xy (lift.py/depose.py/pivot.py), qui va du
+    repere local vers une correction de cap dans le repere du robot.
+
+    world_point : np.array([x, y, z]) en repere monde (ex: un des points
+      retournes par carton_face_centers()).
+    base_pose : (x, y, z, yaw) du bassin, EXACTEMENT le tuple retourne par
+      SimStateListener.pose() -- lire une pose fraiche a chaque appel, ne
+      jamais reutiliser une pose mesuree avant un walk_to() precedent (deja
+      documente ailleurs dans ce projet : le robot peut deriver entre-temps).
+
+    Seule la rotation autour de Z (yaw) est prise en compte -- le robot est
+    suppose rester vertical une fois debout (roll/pitch negligeables), meme
+    hypothese implicite que pinch_yaw_offset partout ailleurs. Retourne
+    np.array([x_local, y_local, z_local]) -- x_local/y_local/z_local
+    correspondent directement a pinch_x/pinch_y/pinch_z (avant tout
+    _rotate_xy -- le robot vise deja dans la bonne direction par construction,
+    pinch_yaw_offset peut rester a 0.0)."""
+    base_x, base_y, base_z, base_yaw = base_pose
+    dx = world_point[0] - base_x
+    dy = world_point[1] - base_y
+    dz = world_point[2] - base_z
+    c, s = math.cos(base_yaw), math.sin(base_yaw)
+    local_x = dx * c + dy * s
+    local_y = -dx * s + dy * c
+    return np.array([local_x, local_y, dz])
+
 
 LEFT_CHAIN = [
     ("J13_SHOULDER_PITCH_L", np.array([0, 1, 0]), np.array([-0.027105, 0.12916, 0.21549])),
@@ -159,6 +310,94 @@ def solve_ik(chain, hand_offset, target, q_init, iters=150, damping=0.05):
         JJt = J @ J.T + damping ** 2 * np.eye(3)
         q = q + J.T @ np.linalg.solve(JJt, error)
     return q
+
+
+def solve_arm_ik(chain, hand_offset, target, q_init, lock_index=None, lock_angle=None,
+                  iters=200, damping=0.05, null_space_gain=0.2, null_space_pref=None):
+    """IK (cinematique inverse) du bras : calcule les 5 angles articulaires (radians)
+    qui amenent la MAIN a la position 3D `target` (X, Y, Z en metres, repere du
+    bassin -- meme convention que pinch_x/pinch_y/pinch_z partout dans ce projet).
+
+    2026-09-11 : consolide en UNE fonction reutilisable ce qui existait duplique
+    (solve_ik ci-dessus + _solve_ik_locked_elbow dans lift.py ET depose.py) --
+    demande explicite de l'utilisateur ("une fonction pour l'IK qui servira a
+    controler les bras").
+
+    Principe (Jacobienne amortie, "damped least squares") : le bras a 5
+    articulations mais la cible n'a que 3 coordonnees (X,Y,Z) -- il existe donc
+    en general une INFINITE de solutions (redondance de 2 DDL). L'algorithme part
+    de `q_init` (position de depart) et AJUSTE les angles par petits pas pour
+    reduire l'ecart entre la main et la cible, jusqu'a convergence -- il choisit
+    donc la solution la plus PROCHE de q_init, pas une solution "canonique". C'est
+    pourquoi le meme `target` peut donner des postures de coude tres differentes
+    selon la valeur de q_init (voir la longue histoire de ce fichier/lift.py sur
+    ce sujet -- q_init n'est jamais anodin).
+
+    Parametres :
+      chain, hand_offset : geometrie du bras (LEFT_CHAIN/HAND_OFFSET_LEFT ou
+        RIGHT_CHAIN/HAND_OFFSET_RIGHT, definis plus haut dans ce fichier).
+      target : np.array([x, y, z]), position 3D visee pour la main.
+      q_init : np.array de 5 angles (radians), point de depart/seed du solveur.
+      lock_index, lock_angle : optionnels -- si fournis, FIGE l'articulation
+        d'index `lock_index` (0=SHOULDER_PITCH, 1=SHOULDER_ROLL, 2=SHOULDER_YAW,
+        3=ELBOW_PITCH, 4=ELBOW_YAW) a `lock_angle` (radians) et ne resout la
+        position qu'avec les 4 AUTRES articulations -- utile pour forcer une
+        forme de bras precise (ex: coude tendu) a une position de main donnee,
+        plutot que de laisser le solveur choisir au hasard parmi les solutions
+        redondantes. Sans ces 2 parametres : IK standard, 5 DDL libres.
+      null_space_gain : avec lock_index/lock_angle, il reste encore 1 DDL
+        redondant parmi les 4 articulations libres (3 equations de position,
+        4 inconnues) -- SANS regularisation, le solveur peut deriver vers une
+        posture aberrante qui atteint quand meme la cible (ex: SHOULDER_YAW a
+        -86deg au lieu de ~0deg, bras qui semble viser le centre du corps au
+        lieu de la cible reelle -- constate le 2026-09-11 : meme erreur de
+        position, poignet identique, mais tout le bras visuellement tordu).
+        Ce parametre projette un rappel vers `q_init` dans le noyau (null
+        space) du Jacobien -- ne change PAS la position finale de la main
+        (le rappel est orthogonal a l'erreur de position), seulement laquelle
+        des solutions redondantes est choisie. 0.0 desactive (comportement
+        d'origine).
+
+    Retourne : np.array de 5 angles (radians), a publier directement sur
+      LEFT_JOINT_INDICES/RIGHT_JOINT_INDICES via Lever (voir lever.py)."""
+    if lock_index is None:
+        return solve_ik(chain, hand_offset, target, q_init, iters=iters, damping=damping)
+
+    free_idx = [i for i in range(len(q_init)) if i != lock_index]
+    q_pref = q_init.copy() if null_space_pref is None else null_space_pref.copy()
+    q = q_init.copy()
+    q[lock_index] = lock_angle
+    n_free = len(free_idx)
+    for _ in range(iters):
+        p0 = forward_kinematics(chain, hand_offset, q)
+        error = target - p0
+        if np.linalg.norm(error) < 1e-7:
+            break
+        J = np.zeros((3, n_free))
+        for k, i in enumerate(free_idx):
+            dq = q.copy()
+            dq[i] += 1e-6
+            J[:, k] = (forward_kinematics(chain, hand_offset, dq) - p0) / 1e-6
+        JJt = J @ J.T + damping ** 2 * np.eye(3)
+        J_pinv = J.T @ np.linalg.inv(JJt)  # (n_free, 3), pseudo-inverse amortie
+        step = J_pinv @ error
+        if null_space_gain:
+            q_free = np.array([q[i] for i in free_idx])
+            q_pref_free = np.array([q_pref[i] for i in free_idx])
+            null_proj = np.eye(n_free) - J_pinv @ J
+            step = step + null_space_gain * (null_proj @ (q_pref_free - q_free))
+        for k, i in enumerate(free_idx):
+            q[i] += step[k]
+        q[lock_index] = lock_angle
+    return q
+
+
+def mirror_left_to_right(q_left):
+    q_right = q_left.copy()
+    q_right[1] *= -1
+    q_right[2] *= -1
+    q_right[4] *= -1
+    return q_right
 
 
 def ease(t):
