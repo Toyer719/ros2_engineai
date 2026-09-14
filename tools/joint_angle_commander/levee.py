@@ -33,14 +33,22 @@ pour tourner le buste avec le carton en main, voir pivot.py (virtual_gamepad_ros
          distance (PINCH_X=0.216), le solveur a laisse le poignet quasi droit (qL[-1]=-3.7deg
          au lieu de 90deg, log [DEBUG] poignet) -- pas de rotation visible, ET position reelle
          incoherente avec celle calculee pour un poignet a 90deg -> "trop serre" au serrage.
-      3) FIX RETENU : _solve_ik_locked_wrist -- fige le dernier angle (ELBOW_YAW) exactement a
-         +-wrist_rotation et ne laisse l'IK resoudre la position qu'avec les 4 autres
-         articulations. Poignet tourne alors GARANTI de l'angle demande (plus de hasard du
-         solveur), hand_offset redevient HAND_OFFSET_LEFT/RIGHT tel quel (plus besoin de le
-         tourner a la main, forward_kinematics applique deja la rotation du dernier joint).
-         Verifie numeriquement (hors robot) : erreur de position ~3e-8 aux 4 cibles pince/
-         serrage gauche/droite a PINCH_X=0.216, tous les joints dans la limite +-150deg.
-         Signe : +90deg gauche/-90deg droite (chaine en miroir, confirme visuellement essai 1).
+      3) FIX RETENU (a l'epoque : _solve_ik_locked_wrist local a ce fichier, remplace le
+         2026-09-14 par solve_arm_ik(..., lock_index=WRIST_CHAIN_INDEX) -- consolidation cote
+         simu du 2026-09-11, jamais repercutee ici avant ce jour) -- fige le dernier angle
+         (ELBOW_YAW) exactement a +-wrist_rotation et ne laisse l'IK resoudre la position
+         qu'avec les 4 autres articulations. Poignet tourne alors GARANTI de l'angle demande
+         (plus de hasard du solveur), hand_offset redevient HAND_OFFSET_LEFT/RIGHT tel quel
+         (plus besoin de le tourner a la main, forward_kinematics applique deja la rotation du
+         dernier joint). Verifie numeriquement (hors robot) : erreur de position ~3e-8 aux 4
+         cibles pince/serrage gauche/droite a PINCH_X=0.216, tous les joints dans la limite
+         +-150deg. Signe : +90deg gauche/-90deg droite (chaine en miroir, confirme visuellement
+         essai 1). 2026-09-14 : le remplacement par solve_arm_ik ajoute AUSSI un terme
+         null-space (absent de l'ancienne _solve_ik_locked_wrist) -- meme classe de bug que
+         celle trouvee et corrigee cote simu ce jour-la (l'unique DDL redondant restant apres
+         le verrouillage peut deriver vers une posture de bras aberrante entre 2 appels
+         proches, visible comme un saut brusque de l'avant-bras). PAS ENCORE VALIDE sur le
+         robot reel.
   - Flexion des genoux (WALK_STANCE_*, _bend_knees/_straighten_knees) : jusqu'ici, levee.py NE
     fléchissait PAS du tout les genoux (contrairement a lift.py cote simu, qui le fait depuis
     le 20/08) -- port direct de ce mecanisme, jamais teste sur le robot reel. Echelle de depart
@@ -62,12 +70,21 @@ from motion_state import ensure_motion_state
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "robot_arm_ik"))
 from lift_carton import (
-    LEFT_CHAIN, RIGHT_CHAIN, HAND_OFFSET_LEFT, HAND_OFFSET_RIGHT, solve_ik, ease,
+    LEFT_CHAIN, RIGHT_CHAIN, HAND_OFFSET_LEFT, HAND_OFFSET_RIGHT, solve_arm_ik, ease,
     forward_kinematics, mirror_left_to_right,
 )
 
 LEFT_JOINT_INDICES = [13, 14, 15, 16, 17]
 RIGHT_JOINT_INDICES = [18, 19, 20, 21, 22]
+# 2026-09-14 : index de l'articulation figee (ELBOW_YAW, poignet) dans LEFT_CHAIN/
+# RIGHT_CHAIN -- meme convention de nommage que ELBOW_PITCH_CHAIN_INDEX cote simu
+# (lift.py/depose.py/pivot.py), utilise avec solve_arm_ik(..., lock_index=WRIST_CHAIN_INDEX).
+# Le robot reel fige le POIGNET (pas le coude comme la simu) -- decision volontaire, voir
+# _solve_ik_locked_wrist ci-dessous (remplace par solve_arm_ik le 2026-09-14) : le
+# verrouillage du poignet sert ELBOW_YAW_ROTATION_DEG (prise par le cote de la main), sans
+# equivalent cote simu -- ne pas changer sans revalider toute la geometrie calibree
+# (PINCH_X/SQUEEZE_Y/LIFT_Z) qui suppose ce choix de verrouillage.
+WRIST_CHAIN_INDEX = 4
 
 Q_LEFT_HOME = np.array([0.000879, 0.075284, -0.000233, -0.126397, -0.000033])
 Q_RIGHT_HOME = np.array([0.000885, -0.075161, 0.000241, -0.126390, 0.000033])
@@ -233,35 +250,6 @@ def _rotate_xy(point, yaw_offset):
     return np.array([x * c - y * s, x * s + y * c, z])
 
 
-def _solve_ik_locked_wrist(chain, hand_offset, target, q_init, last_angle, iters=200, damping=0.05):
-    """Comme solve_ik (lift_carton.py) mais fige le DERNIER angle du chain (ELBOW_YAW,
-    poignet) a `last_angle` et ne resout la position qu'avec les 4 AUTRES articulations.
-    solve_ik normal laisse les 2 DDL redondants du chain a 5 joints/3 DDL de position au
-    hasard du solveur -- constate le 2026-09-03 que ca ne met PAS la rotation demandee dans
-    le poignet a toutes les distances (cf. commentaire dans run_lift_sequence). Verifie
-    numeriquement (hors robot) : erreur de position ~3e-8 sur les 4 cibles pince/serrage
-    gauche/droite a PINCH_X=0.216, poignet exactement a l'angle demande, tous les joints
-    dans la limite mecanique +-150deg."""
-    q = q_init.copy()
-    q[-1] = last_angle
-    n_free = len(q) - 1
-    for _ in range(iters):
-        p0 = forward_kinematics(chain, hand_offset, q)
-        error = target - p0
-        if np.linalg.norm(error) < 1e-7:
-            break
-        J = np.zeros((3, n_free))
-        for i in range(n_free):
-            dq = q.copy()
-            dq[i] += 1e-6
-            J[:, i] = (forward_kinematics(chain, hand_offset, dq) - p0) / 1e-6
-        JJt = J @ J.T + damping ** 2 * np.eye(3)
-        step = J.T @ np.linalg.solve(JJt, error)
-        q[:n_free] = q[:n_free] + step
-        q[-1] = last_angle
-    return q
-
-
 def _quintic_ease(t):
     """Meme forme que math::QuinticInterpolate utilise par pd_stand_runner.cc pour sa
     propre transition (vitesse ET acceleration nulles aux deux bords) -- port depuis
@@ -393,19 +381,28 @@ def run_lift_sequence(node, lever, args):
     # tourne, ET position reelle du point de contact incoherente avec celle calculee pour un
     # poignet a 90deg -> "trop serre" au serrage. Fix definitif : FIGER le dernier angle
     # (ELBOW_YAW) a +-wrist_rotation et ne laisser l'IK resoudre la position qu'avec les 4
-    # AUTRES articulations (_solve_ik_locked_wrist ci-dessous) -- le poignet tourne alors
-    # GARANTI de l'angle demande, plus de hasard du solveur. hand_offset redevient
-    # HAND_OFFSET_LEFT/RIGHT tel quel (pas tourne a la main) : forward_kinematics applique deja
-    # la rotation du dernier joint au offset, inutile de la precalculer.
-    q_pinch_L = _solve_ik_locked_wrist(LEFT_CHAIN, HAND_OFFSET_LEFT,
-                                        _rotate_xy([PINCH_X, PINCH_Y, args.pinch_z], args.pinch_yaw_offset),
-                                        Q_LEFT_HOME, wrist_rotation)
+    # AUTRES articulations (solve_arm_ik, lock_index=WRIST_CHAIN_INDEX -- 2026-09-14,
+    # consolide ici depuis l'ancienne _solve_ik_locked_wrist locale a ce fichier) -- le
+    # poignet tourne alors GARANTI de l'angle demande, plus de hasard du solveur.
+    # hand_offset redevient HAND_OFFSET_LEFT/RIGHT tel quel (pas tourne a la main) :
+    # forward_kinematics applique deja la rotation du dernier joint au offset, inutile de la
+    # precalculer.
+    q_pinch_L = solve_arm_ik(LEFT_CHAIN, HAND_OFFSET_LEFT,
+                              _rotate_xy([PINCH_X, PINCH_Y, args.pinch_z], args.pinch_yaw_offset),
+                              Q_LEFT_HOME, lock_index=WRIST_CHAIN_INDEX, lock_angle=wrist_rotation)
     q_pinch_R = mirror_left_to_right(q_pinch_L)
     print(f"[DEBUG] poignet -- qL[-1]={np.degrees(q_pinch_L[-1]):.1f}deg "
           f"qR[-1]={np.degrees(q_pinch_R[-1]):.1f}deg (limite mecanique : +-150deg)")
 
+    # 2026-09-14 : null_space_pref=q_pinch_L ajoute -- sans lui, le solveur (1 DDL redondant
+    # apres verrouillage du poignet) peut converger sur une branche d'epaule/coude differente
+    # de q_pinch_L pour ce petit deplacement Y (serrage), meme classe de bug/fix que celui
+    # trouve cote simu le meme jour (lift.py, squeeze-phase). PAS ENCORE VALIDE sur le robot
+    # reel.
     squeeze_L = _rotate_xy([PINCH_X, SQUEEZE_Y, args.pinch_z], args.pinch_yaw_offset)
-    q_squeeze_L = _solve_ik_locked_wrist(LEFT_CHAIN, HAND_OFFSET_LEFT, squeeze_L, q_pinch_L, wrist_rotation)
+    q_squeeze_L = solve_arm_ik(LEFT_CHAIN, HAND_OFFSET_LEFT, squeeze_L, q_pinch_L,
+                                lock_index=WRIST_CHAIN_INDEX, lock_angle=wrist_rotation,
+                                null_space_pref=q_pinch_L)
     q_squeeze_R = mirror_left_to_right(q_squeeze_L)
 
     run_approche = args.only_phase in (None, "approche")
@@ -438,15 +435,22 @@ def run_lift_sequence(node, lever, args):
         # extremites sont correctes, a cause de la non-linearite de la geometrie du bras.
         # Fix : ramp en ESPACE CARTESIEN comme la levee ci-dessous -- interpole la position
         # 3D de la main en ligne droite du point de passage vers pinch, IK resolue a chaque
-        # pas (poignet toujours fige a wrist_rotation), warm-start sur le pas precedent.
+        # pas (poignet toujours fige a wrist_rotation). 2026-09-14 : null_space_pref ancre sur
+        # anchor_L (pose FIXE, capturee une fois avant la boucle) au lieu d'un warm-start sur
+        # qL qui derive a chaque pas -- meme fix que cote simu (depose.py/pivot.py : ancrage
+        # fixe, pas glissant, pour eviter la derive cumulative du DDL redondant sur toute la
+        # rampe). PAS ENCORE VALIDE sur le robot reel.
         pinch_target_L = _rotate_xy([PINCH_X, PINCH_Y, args.pinch_z], args.pinch_yaw_offset)
         waypoint_hand_L = forward_kinematics(LEFT_CHAIN, HAND_OFFSET_LEFT, WAYPOINT_Q_LEFT)
         qL, qR = WAYPOINT_Q_LEFT.copy(), WAYPOINT_Q_RIGHT.copy()
+        anchor_L = WAYPOINT_Q_LEFT.copy()
         n = max(1, int(APPROACH_DURATION * RATE_HZ))
         for i in range(n + 1):
             a = ease(i / n)
             target = waypoint_hand_L + a * (pinch_target_L - waypoint_hand_L)
-            qL = _solve_ik_locked_wrist(LEFT_CHAIN, HAND_OFFSET_LEFT, target, qL, wrist_rotation, iters=30)
+            qL = solve_arm_ik(LEFT_CHAIN, HAND_OFFSET_LEFT, target, qL,
+                               lock_index=WRIST_CHAIN_INDEX, lock_angle=wrist_rotation, iters=30,
+                               null_space_pref=anchor_L)
             qR = mirror_left_to_right(qL)
             if args.dry_run:
                 if i in (0, n):
@@ -474,14 +478,18 @@ def run_lift_sequence(node, lever, args):
             for idx in LEFT_JOINT_INDICES + RIGHT_JOINT_INDICES:
                 lever.set_gains(idx, stiffness=LEVEE_STIFFNESS)
 
+        # 2026-09-14 : null_space_pref=q_squeeze_L (pose FIXE, capturee avant la boucle) au
+        # lieu d'un warm-start glissant sur qL_prev -- meme fix que la rampe d'approche
+        # ci-dessus et que les rampes cote simu (depose.py/pivot.py).
         qL_prev, qR_prev = q_squeeze_L.copy(), q_squeeze_R.copy()
         n = max(1, int(LIFT_DURATION * RATE_HZ))
         for i in range(n + 1):
             a = ease(i / n)
             z = args.pinch_z + a * (LIFT_Z - args.pinch_z)
-            qL_prev = _solve_ik_locked_wrist(LEFT_CHAIN, HAND_OFFSET_LEFT,
-                                              _rotate_xy([PINCH_X, SQUEEZE_Y, z], args.pinch_yaw_offset),
-                                              qL_prev, wrist_rotation, iters=30)
+            qL_prev = solve_arm_ik(LEFT_CHAIN, HAND_OFFSET_LEFT,
+                                    _rotate_xy([PINCH_X, SQUEEZE_Y, z], args.pinch_yaw_offset),
+                                    qL_prev, lock_index=WRIST_CHAIN_INDEX, lock_angle=wrist_rotation,
+                                    iters=30, null_space_pref=q_squeeze_L)
             qR_prev = mirror_left_to_right(qL_prev)
             if args.dry_run:
                 if i in (0, n):

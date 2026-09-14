@@ -215,7 +215,7 @@ class ChefNode(Node):
 
         self._publish_step(50)
         if not self.lift(pinch_x=pinch_x, pinch_y=PINCH_Y, pinch_z=PINCH_Z, squeeze_y=SQUEEZE_Y,
-                          lift_z=LIFT_Z, lift_duration=5.0, hold_seconds=3.0, walk_stance=False,
+                          lift_z=LIFT_Z, lift_duration=3.5, hold_seconds=1.0, walk_stance=False,
                           walk_stance_scale=WALK_STANCE_SCALE, only_phase="levee", release_after=False):
             self.get_logger().error("run_sequence : lift() a echoue (levee) -- arret.")
             return
@@ -263,6 +263,7 @@ class ChefNode(Node):
         PIVOT_ANGLE_DEG = 90.0
         if not self.pivot(pinch_x=pinch_x, pinch_y=PINCH_Y, pinch_z=PINCH_Z, squeeze_y=SQUEEZE_Y,
                            lift_z=LIFT_Z, angle_deg=PIVOT_ANGLE_DEG, walk_stance_scale=WALK_STANCE_SCALE,
+                           pivot_duration=1.5, hold_seconds=1.0,
                            release_after=False, free_legs_for_walk=False,
                            depivot_before_release=False):
             self.get_logger().error(f"run_sequence : pivot({PIVOT_ANGLE_DEG:.0f}) a echoue -- arret.")
@@ -285,9 +286,29 @@ class ChefNode(Node):
         # ailleurs (lift.py), plutot que la combinaison jambes droites
         # statiques + charge qui descend, jamais testee.
         self._publish_step(80)
+        # 2026-09-14 : drop_z remonte de LIFT_Z-0.03 (0.17, a peine sous la hauteur de
+        # levee -- pensee pour un relachement en l'air, pas de vrai podium de depose en
+        # dessous a l'epoque) vers PINCH_Z (0.106) -- le nouveau podium de depose
+        # (assets/resource/pm01_edu_carton.xml, ajoute le 14/09) fait maintenant la MEME
+        # hauteur (0.8m) que le podium de PRISE, donc la hauteur locale qui correspondait
+        # deja a un carton pose sur un podium de 0.8m (PINCH_Z, utilisee a l'approche/
+        # serrage) est la bonne cible pour viser le dessus du podium de depose aussi.
+        # PAS ENCORE VALIDE en sim (demande utilisateur : "viser plus bas").
+        # 2026-09-14 : tendre_duration/degagement_waypoint_duration/degagement_duration
+        # remontes de 1.0 -> 2.0 (valeurs par defaut Depose.action) -- l'acceleration du
+        # 14/09 les avait raccourcies, mais le relachement du carton se produit
+        # UNIQUEMENT par l'ecartement des mains en atteignant WAYPOINT_Q_LEFT/RIGHT
+        # pendant "degagement" (aucun desserrage separe, cf Depose.action) : une rampe
+        # trop rapide ne laisse probablement pas les PD des bras (charge = carton tenu)
+        # rattraper la cible commandee a temps, d'ou "n'ecarte pas assez les bras... ne
+        # lache pas le carton" (constate par l'utilisateur). depose_duration/
+        # depivot_duration restent acceleres (descente/depivot, pas directement lies au
+        # relachement).
         if not self.depose(pinch_x=pinch_x, pinch_y=PINCH_Y, pinch_z=LIFT_Z, squeeze_y=SQUEEZE_Y,
-                            hold_z=LIFT_Z, drop_z=LIFT_Z - 0.03,
-                            depivot_from_deg=PIVOT_ANGLE_DEG, depivot_duration=2.0):
+                            hold_z=LIFT_Z, drop_z=PINCH_Z,
+                            depivot_from_deg=PIVOT_ANGLE_DEG, depivot_duration=1.5,
+                            tendre_duration=2.0, depose_duration=2.0,
+                            degagement_waypoint_duration=2.0, degagement_duration=2.0):
             self.get_logger().error("run_sequence : depose() a echoue -- arret.")
             return
 

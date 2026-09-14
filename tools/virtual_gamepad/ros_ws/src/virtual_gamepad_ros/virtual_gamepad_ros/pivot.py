@@ -212,44 +212,18 @@ class PivotActionServer(Node):
         # rotation/le maintien.
         lever.set_gains(WAIST_JOINT_INDEX, WAIST_KP_HOLD, WAIST_KD_HOLD)
 
-        # 2026-09-10 : cause racine trouvee pour la chute au moment de la
-        # levee -- la rampe IK pinch_z->lift_z qui etait ici (a g.pinch_x
-        # fixe) ne publiait JAMAIS ses poses intermediaires (ni
-        # self._publish_pose ni sleep) : elle ne faisait que preparer une
-        # graine IK. La levee reelle sur le robot etait donc un SAUT INSTANTANE
-        # a lift_z au tout premier appel publie qui suivait (l'ancienne boucle
-        # de retrait, executee apres la levee, avant le pivot) -- pas de rampe
-        # du tout, choc sur l'equilibre pile a la levee. Corrige en suivant la
-        # suggestion de l'utilisateur : saisir, RAPPROCHER le carton du corps
-        # (pinch_x -> RETRACT_PINCH_X, a hauteur pinch_z inchangee, comme une
-        # personne qui ramene une caisse contre elle), PUIS lever -- et les
-        # deux phases sont maintenant reellement publiees en rampe (avant,
-        # seule l'ancienne boucle de retrait, 1s, etait publiee ; la levee de
-        # 3s ne l'etait pas). Le retrait avant le pivot (qui existait deja
-        # depuis hier) devient inutile ici puisque le bras est deja retracte
-        # avant meme la levee -- supprime plus bas.
-        # Marge shoulder-roll a RETRACT_PINCH_X=0.20 verifiee (solve_ik) a
-        # hauteur lift_z (~13deg) ; PAS reverifiee a hauteur pinch_z (plus
-        # basse, marge attendue egale ou meilleure mais pas calculee).
-        # 2026-09-11 : X/Y de depart = pinch_L/pinch_R (position dynamique
-        # REELLEMENT tenue) au lieu de g.pinch_x/g.squeeze_y figes -- meme
-        # raison que le fix ci-dessus (pas de saut au relais).
-        RETRACT_PINCH_X = 0.20
-        q_retract_start_L = q_squeeze_L.copy()
-        n_retract = max(1, int(1.0 * 30))
-        for i in range(n_retract + 1):
-            a = ease(i / n_retract)
-            x = pinch_L[0] + a * (RETRACT_PINCH_X - pinch_L[0])
-            q_squeeze_L = solve_arm_ik(LEFT_CHAIN, HAND_OFFSET_LEFT,
-                                        np.array([x, pinch_L[1], pinch_L[2]]),
-                                        q_squeeze_L, lock_index=ELBOW_PITCH_CHAIN_INDEX,
-                                        lock_angle=Q_LEFT_HOME[ELBOW_PITCH_CHAIN_INDEX], iters=30,
-                                        null_space_pref=q_retract_start_L)
-            q_squeeze_R = mirror_left_to_right(q_squeeze_L)
-            self._publish_pose(lever, q_squeeze_L, q_squeeze_R, 0.0,
-                                leg_targets, g.walk_stance_stiffness_scale)
-            time.sleep(1.0 / 30)
-
+        # 2026-09-10 (historique) : cette section ramenait le carton pres du corps
+        # (RETRACT_PINCH_X) juste avant le pivot. Le commentaire d'origine disait deja
+        # ce retrait "inutile ici puisque le bras est deja retracte avant meme la
+        # levee -- supprime plus bas", mais le CODE n'avait en fait jamais ete
+        # supprime -- retire pour de bon le 2026-09-14, sur demande explicite de
+        # l'utilisateur ("je veux que pour tourner on garde la meme pose des bras") :
+        # ce retrait bougeait activement les bras juste avant/pendant le debut du
+        # pivot, visible comme "les avant-bras tournent" (en plus de l'entrainement
+        # rigide normal du bras par la rotation du buste, attendu et inevitable).
+        # q_squeeze_L/R restent maintenant EXACTEMENT la pose calculee plus haut
+        # (position de serrage reellement tenue, a hauteur g.lift_z), inchangee tout
+        # du long du pivot.
         angle_target = np.radians(g.angle_deg)
 
         self.get_logger().info(

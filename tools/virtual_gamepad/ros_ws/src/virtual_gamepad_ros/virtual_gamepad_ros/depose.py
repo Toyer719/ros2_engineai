@@ -220,12 +220,20 @@ class DeposeActionServer(Node):
             goal_handle.abort()
             result.success = False
             return result
-        RETRACT_PINCH_X = 0.20
+        # 2026-09-14 : RETRACT_PINCH_X (forcait X=0.20 des la toute premiere pose,
+        # publiee INSTANTANEMENT, pas en rampe) supprime -- pivot.py ne retire plus
+        # les bras avant de rendre la main (meme demande utilisateur, voir son
+        # commentaire), donc ce X force ne correspondait plus a ce que pivot.py
+        # tenait reellement -> saut brusque des avant-bras constate juste apres la
+        # fin de la rotation. hold_L/R gardent maintenant hold_L[0]/hold_R[0] tels
+        # que calcules (position REELLEMENT tenue, identique a la derniere pose de
+        # pivot.py -- meme calcul source, carton_face_centers()+world_to_robot_local
+        # a partir de la MEME pose sim_state).
         face_gauche_monde, face_droite_monde = carton_face_centers()
         hold_L = world_to_robot_local(face_gauche_monde, pose)
         hold_R = world_to_robot_local(face_droite_monde, pose)
-        hold_L = np.array([RETRACT_PINCH_X, hold_L[1] - SQUEEZE_OFFSET_Y, g.hold_z])
-        hold_R = np.array([RETRACT_PINCH_X, hold_R[1] + SQUEEZE_OFFSET_Y, g.hold_z])
+        hold_L = np.array([hold_L[0], hold_L[1] - SQUEEZE_OFFSET_Y, g.hold_z])
+        hold_R = np.array([hold_R[0], hold_R[1] + SQUEEZE_OFFSET_Y, g.hold_z])
         # seed = WAYPOINT_Q_LEFT/RIGHT (posture "coudes vers l'arriere",
         # PROCHE de ce que lift.py/pivot.py tenaient reellement) au lieu de
         # Q_LEFT_HOME (posture de repos, tres differente) -- meme raison
@@ -313,6 +321,55 @@ class DeposeActionServer(Node):
                                     lock_angle=Q_LEFT_HOME[ELBOW_PITCH_CHAIN_INDEX])
         q_release_R = mirror_left_to_right(q_release_L)
         qL, qR = self._move_arms(lever, qL, q_release_L, qR, q_release_R, g.tendre_duration)
+
+        # 2026-09-14 : etape d'ECARTEMENT ajoutee sur demande explicite de l'utilisateur
+        # ("il faut ecarter les bras avant de les retirer") -- avant, le degagement
+        # sautait DIRECTEMENT de release_L (mains encore proches du carton, juste
+        # ouvertes de SQUEEZE_OFFSET_Y ~9.5cm) vers WAYPOINT_Q_LEFT/RIGHT (posture
+        # articulaire fixe, coudes vers l'arriere) -- les mains restaient donc pres du
+        # volume du carton/podium pendant tout le debut du retrait. Ecarte ici
+        # explicitement en cartesien (meme X/Z que release_L, Y ELARGI) avant de
+        # rejoindre le point de passage. PAS ENCORE VALIDE en sim.
+        ECARTEMENT_GAP_Y = 0.08
+        ECARTEMENT_DURATION = 1.0
+        self.get_logger().info(f"ecartement -- mains ecartees avant retrait ({ECARTEMENT_DURATION:.1f}s)")
+        ecart_L = np.array([hold_L[0], hold_L[1] + ECARTEMENT_GAP_Y, g.drop_z])
+        q_ecart_L = solve_arm_ik(LEFT_CHAIN, HAND_OFFSET_LEFT, ecart_L, qL,
+                                  lock_index=ELBOW_PITCH_CHAIN_INDEX,
+                                  lock_angle=Q_LEFT_HOME[ELBOW_PITCH_CHAIN_INDEX],
+                                  null_space_pref=qL)
+        q_ecart_R = mirror_left_to_right(q_ecart_L)
+        qL, qR = self._move_arms(lever, qL, q_ecart_L, qR, q_ecart_R, ECARTEMENT_DURATION)
+
+        # 2026-09-14 : translation ARRIERE (X) ajoutee sur demande explicite de
+        # l'utilisateur ("il repasse par le serrage... translate vers l'arriere") --
+        # sans ca, le saut EN ESPACE ARTICULAIRE (_move_arms) de q_ecart_L vers
+        # WAYPOINT_Q_LEFT/RIGHT (posture tres differente, coude 0deg -> -110deg) ne
+        # garantit RIEN sur la trajectoire de la main en cartesien -- elle peut
+        # repasser pres du point de serrage avant de rejoindre le point de passage.
+        # Ramp cartesien EN X SEUL (meme technique que le retrait de pivot.py),
+        # main tiree pres du corps AVANT le saut vers WAYPOINT_Q -- ce saut devient
+        # alors beaucoup plus court/sur puisque la main est deja proche du corps.
+        # PAS ENCORE VALIDE en sim.
+        RETREAT_BACK_X = 0.05
+        RETREAT_BACK_DURATION = 1.0
+        self.get_logger().info(f"translation arriere -- main ramenee pres du corps ({RETREAT_BACK_DURATION:.1f}s)")
+        n_retreat = max(1, int(RETREAT_BACK_DURATION * 30))
+        q_retreat_start_L = qL.copy()
+        for i in range(n_retreat + 1):
+            a = ease(i / n_retreat)
+            x = ecart_L[0] + a * (RETREAT_BACK_X - ecart_L[0])
+            qL = solve_arm_ik(LEFT_CHAIN, HAND_OFFSET_LEFT,
+                               np.array([x, ecart_L[1], ecart_L[2]]), qL,
+                               lock_index=ELBOW_PITCH_CHAIN_INDEX,
+                               lock_angle=Q_LEFT_HOME[ELBOW_PITCH_CHAIN_INDEX], iters=30,
+                               null_space_pref=q_retreat_start_L)
+            qR = mirror_left_to_right(qL)
+            for idx, angle in zip(LEFT_JOINT_INDICES, qL):
+                lever[idx] = float(angle)
+            for idx, angle in zip(RIGHT_JOINT_INDICES, qR):
+                lever[idx] = float(angle)
+            time.sleep(1.0 / 30)
 
         self.get_logger().info(
             f"degagement -- coudes vers l'arriere ({g.degagement_waypoint_duration:.1f}s) "

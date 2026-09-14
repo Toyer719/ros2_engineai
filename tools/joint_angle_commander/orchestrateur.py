@@ -7,6 +7,7 @@ import rclpy
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import marche as walk_mod
 import levee as lift_mod
+import levee_pivot as pivot_mod
 from lever import Lever
 
 
@@ -33,14 +34,37 @@ def main():
                               "podium.")
     parser.add_argument("--rate-hz", type=float, default=walk_mod.RATE_HZ)
     parser.add_argument("--walk-motion-state", type=str, default=walk_mod.WALK_MOTION_STATE)
-    parser.add_argument("--only-phase", choices=["marche", "levee"], default=None,
+    parser.add_argument("--only-phase", choices=["marche", "levee", "pivot"], default=None,
                          help="marche = s'arrete apres le retour en lower_body_balance "
                               "(pour mesurer/valider la distance au podium avant la "
                               "levee). levee = saute la marche (robot deja place a la "
-                              "main), enchaine directement levee.py.")
+                              "main), enchaine directement levee.py (approche/serrage/levee "
+                              "SEULS, pas de pivot/depose). pivot = 2026-09-14, saute la "
+                              "marche, enchaine directement levee_pivot.py (sequence COMPLETE "
+                              "prise+pivot+depose) -- voir --angle-deg. None (par defaut) = "
+                              "marche PUIS levee.py (comportement d'origine) sauf si "
+                              "--with-pivot est passe (marche PUIS levee_pivot.py, sequence "
+                              "COMPLETE marche+prise+pivot+depose en un seul appel).")
+    parser.add_argument("--with-pivot", action="store_true",
+                         help="2026-09-14 -- n'a d'effet que si --only-phase n'est PAS "
+                              "precise (sequence complete) : utilise levee_pivot.py (prise+"
+                              "pivot+depose) au lieu de levee.py (prise seule) apres la "
+                              "marche. PREMIERE COMBINAISON marche+pivot+depose EN UN SEUL "
+                              "APPEL jamais testee sur ce robot -- valider chaque brique "
+                              "separement d'abord (--only-phase marche, puis --only-phase "
+                              "pivot seul robot deja en place) avant d'utiliser ce flag, "
+                              "jamais au premier essai d'une session.")
     parser.add_argument("--lift-only-phase", choices=["approche", "serrage", "levee"], default=None,
                          help="transmis a levee -- pour valider la levee pas a "
-                              "pas apres la marche.")
+                              "pas apres la marche. Ignore si --with-pivot ou --only-phase "
+                              "pivot (levee_pivot.py a son propre --only-phase interne, pas "
+                              "expose ici -- lancer levee_pivot.py directement pour tester "
+                              "ses phases separement).")
+    parser.add_argument("--angle-deg", type=float, default=None,
+                         help="2026-09-14, transmis a levee_pivot.py si --only-phase pivot ou "
+                              "--with-pivot -- angle de pivot (deg), CARTON EN MAIN. None = "
+                              "defaut prudent de levee_pivot.py (20deg) -- NE PAS remonter "
+                              "sans validation progressive, voir sa docstring.")
     parser.add_argument("--pinch-z", type=float, default=0.106,
                          help="2026-09-09 : podium remesure a 0.8m, ajuste apres 1er essai reel "
                               "(\"leve les bras un peu trop\" a +0.126) -- voir levee.py pour "
@@ -99,17 +123,39 @@ def main():
                   "--forward/--duration et recommencer.", flush=True)
             return
 
-        lift_args = argparse.Namespace(
-            pinch_z=args.pinch_z, pinch_yaw_offset=args.pinch_yaw_offset,
-            wrist_rotation_deg=args.wrist_rotation_deg, walk_stance_scale=args.walk_stance_scale,
-            skip_motion_state=args.skip_motion_state, only_phase=args.lift_only_phase,
-            dry_run=args.dry_run, no_confirm=not args.confirm,
-        )
+        # 2026-09-14 : branche vers levee_pivot.py (prise+pivot+depose) au lieu de
+        # levee.py (prise seule) si --only-phase pivot OU --with-pivot (sequence
+        # complete). Namespace construit depuis les defauts propres de
+        # levee_pivot._build_arg_parser() (angle_deg=20 prudent, pivot_duration=4.0,
+        # etc.) -- seuls les champs deja partages avec orchestrateur.py sont
+        # ecrases, le reste garde les valeurs par defaut deja validees de
+        # levee_pivot.py (ne PAS les redupliquer ici, une seule source de verite).
+        use_pivot = args.only_phase == "pivot" or args.with_pivot
+        if use_pivot:
+            pivot_args = pivot_mod._build_arg_parser().parse_args([])
+            pivot_args.pinch_z = args.pinch_z
+            pivot_args.pinch_yaw_offset = args.pinch_yaw_offset
+            pivot_args.wrist_rotation_deg = args.wrist_rotation_deg
+            pivot_args.walk_stance_scale = args.walk_stance_scale
+            pivot_args.skip_motion_state = args.skip_motion_state
+            pivot_args.dry_run = args.dry_run
+            pivot_args.no_confirm = not args.confirm
+            pivot_args.only_phase = None  # sequence complete prise+pivot+depose
+            if args.angle_deg is not None:
+                pivot_args.angle_deg = args.angle_deg
+        else:
+            lift_args = argparse.Namespace(
+                pinch_z=args.pinch_z, pinch_yaw_offset=args.pinch_yaw_offset,
+                wrist_rotation_deg=args.wrist_rotation_deg, walk_stance_scale=args.walk_stance_scale,
+                skip_motion_state=args.skip_motion_state, only_phase=args.lift_only_phase,
+                dry_run=args.dry_run, no_confirm=not args.confirm,
+            )
+
         lever = None
         if not args.dry_run:
             # marche() se termine deja en lower_body_balance quand elle reussit -- ne
-            # revalider l'etat que si la marche a ete sautee (only_phase="levee" ou
-            # walk_repeat=0), pour eviter un 2e appel bloquant redondant (jusqu'a 1s
+            # revalider l'etat que si la marche a ete sautee (only_phase="levee"/"pivot"
+            # ou walk_repeat=0), pour eviter un 2e appel bloquant redondant (jusqu'a 1s
             # d'attente d'un message d'etat frais) juste avant de lever les bras.
             if not args.skip_motion_state and not marche_effectuee:
                 ok = lift_mod.ensure_motion_state(node, "lower_body_balance",
@@ -120,7 +166,10 @@ def main():
                     return
             lever = Lever(node)
 
-        lift_mod.run_lift_sequence(node, lever, lift_args)
+        if use_pivot:
+            pivot_mod.run_lift_and_pivot(node, lever, pivot_args)
+        else:
+            lift_mod.run_lift_sequence(node, lever, lift_args)
     finally:
         if node is not None:
             node.destroy_node()

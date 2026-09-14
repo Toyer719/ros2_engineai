@@ -30,9 +30,46 @@
          dans lift.py/depose.py), pas cote geometrie de la scene. Carton remis A RAS
          du bord du podium (carton_front == podium_front == 1.6325), PROVEN_PINCH_X
          remis a 0.345 dans chef_node.py (valeur qui atteint bien cette position). -->
+    <!-- 2026-09-14 : podium de depose (2e poste, buste tourne) -- 3 iterations de
+         positionnement, aucune encore validee visuellement/par telemetrie :
+         (1) y=0.41 : chevauchait le podium de PRISE (x:[1.6325,2.5425] y:[-0.355,0.355]),
+             bloquait l'approche du bras ("le robot ne peut meme plus atteindre le
+             carton") -- calcul base (a tort) sur l'offset de PRISE (podium_pickup_x -
+             bassin_x = 0.43m) tourne de 90deg.
+         (2) y=1.0 : ne chevauche plus le podium de prise, mais bien trop loin pour que
+             le bras y depose le carton ("trop loin pour que le robot pose dessus") --
+             meme erreur de raisonnement (0.43m est l'offset de PRISE, pas l'offset
+             REELLEMENT TENU pendant pivot/depose).
+         (3) CORRECTION : pivot.py/depose.py RAPPROCHENT le carton du corps avant de
+             pivoter (RETRACT_PINCH_X=0.20, "comme une personne qui ramene une caisse
+             contre elle" -- voir pivot.py) -- c'est CET offset (~0.20m avant le pivot,
+             pas les ~0.43m de la prise) qui se retrouve tourne de 90deg pendant le
+             pivot/depose (solve_arm_ik ne connait pas la rotation du buste, seul le
+             WAIST_JOINT tourne physiquement l'ensemble bras+charge deja-resolu -- donc
+             la position tenue REELLE = bassin + R(90deg)*(offset LOCAL au moment du
+             pivot, PAS celui de la prise). Nouvelle estimation : bassin (~1.34,-0.018)
+             + R(90deg)*(0.20, ~0) = (~1.25, ~0.20-0.25). PAS ENCORE VALIDE visuellement
+             ni par telemetrie -- a ajuster des que l'utilisateur voit le resultat en
+             sim (dire de combien de cm/m ca reste faux, dans quelle direction).
+         Hauteur 0.6m (etait 0.4m, sur demande utilisateur). ATTENTION : ceci ne fait QUE
+         placer la geometrie dans la scene -- hold_z/drop_z dans chef_node.py::depose()
+         sont encore calibres pour reposer le carton a la MEME hauteur que la prise
+         (podium 0.8m) ; si le carton doit vraiment atterrir SUR ce nouveau podium,
+         hold_z/drop_z devront etre retunes et revalides par telemetrie. -->
     <worldbody>
         <body name="podium" pos="2.0875 0.0 0.4">
             <geom name="podium_block" type="box" size="0.455 0.355 0.4" mass="20"
+                  rgba="0.55 0.55 0.58 1" friction="1.0 0.005 0.0001" group="0"/>
+        </body>
+        <!-- 2026-09-14 (suite) : deplace de y=0.25 -> y=0.5 -- l'ancien y=0.25 (near edge
+             y=0.05) empietait sur le couloir de marche du robot (bassin marche selon
+             y~-0.02, x:0 -> ~1.34, et la boite couvrait x:[1.0,1.5], donc EN TRAVERS du
+             chemin, pas juste pres du point d'arrivee) -- constate par l'utilisateur
+             ("c'est sur le chemin du robot"). y=0.5 donne ~0.30m de degagement (near
+             edge a y=0.30) par rapport au couloir de marche. Hauteur alignee sur le
+             podium de prise (0.4/0.8m, sur demande utilisateur). -->
+        <body name="depose_podium" pos="1.25 0.5 0.3">
+            <geom name="depose_podium_block" type="box" size="0.25 0.20 0.3" mass="20"
                   rgba="0.55 0.55 0.58 1" friction="1.0 0.005 0.0001" group="0"/>
         </body>
         <body name="carton" pos="1.77 0.0 0.946">

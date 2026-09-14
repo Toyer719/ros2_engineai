@@ -258,6 +258,15 @@ class LiftActionServer(Node):
         face_gauche_monde, face_droite_monde = carton_face_centers()
         pinch_L = world_to_robot_local(face_gauche_monde, pose)
         pinch_R = world_to_robot_local(face_droite_monde, pose)
+        # 2026-09-14 : pinch_z n'est PAS utilise ici (approche/serrage visent le centre
+        # REEL des faces du carton, cf carton_face_centers() -- le champ g.pinch_z
+        # herite de Lift.action est mort pour cette phase). Sur demande utilisateur
+        # ("les bras visent plus bas"), offset Z fixe applique aux DEUX mains -- PAS
+        # ENCORE VALIDE en sim, ajuster AIM_LOWER_Z_OFFSET si le point vise reste trop
+        # haut/bas.
+        AIM_LOWER_Z_OFFSET = -0.05
+        pinch_L[2] += AIM_LOWER_Z_OFFSET
+        pinch_R[2] += AIM_LOWER_Z_OFFSET
 
         # 2026-09-11 : REDESIGN sur demande explicite de l'utilisateur --
         # "lors de la visee je veux qu'il ne touche pas le carton (juste vise
@@ -287,9 +296,18 @@ class LiftActionServer(Node):
         # montant.
         squeeze_L = np.array([pinch_L[0], pinch_L[1] - SQUEEZE_OFFSET_Y, pinch_L[2]])
         squeeze_R = np.array([pinch_R[0], pinch_R[1] + SQUEEZE_OFFSET_Y, pinch_R[2]])
+        # 2026-09-14 : null_space_pref=q_aim_L ajoute -- sans lui, le solveur (1 DDL
+        # redondant apres verrouillage du coude) peut converger sur une branche
+        # d'epaule/avant-bras differente de q_aim_L meme pour un petit deplacement
+        # cartesien (fermeture du Y de serrage seulement), _move_arms interpolant
+        # ENSUITE en espace ARTICULAIRE entre les deux -- vu par l'utilisateur comme
+        # un "changement brusque" de l'avant-bras au moment du serrage. Meme
+        # mecanisme/fix deja identifie ailleurs dans ce projet (voir memoire : derive
+        # de l'avant-bras corrigee en ancrant null_space_pref a une posture fixe).
         q_squeeze_L = solve_arm_ik(LEFT_CHAIN, HAND_OFFSET_LEFT, squeeze_L, q_aim_L,
                                     lock_index=ELBOW_PITCH_CHAIN_INDEX,
-                                    lock_angle=Q_LEFT_HOME[ELBOW_PITCH_CHAIN_INDEX])
+                                    lock_angle=Q_LEFT_HOME[ELBOW_PITCH_CHAIN_INDEX],
+                                    null_space_pref=q_aim_L)
         q_squeeze_R = mirror_left_to_right(q_squeeze_L)
 
         if run_approche:
