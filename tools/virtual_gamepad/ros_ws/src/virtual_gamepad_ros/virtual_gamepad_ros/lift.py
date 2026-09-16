@@ -14,7 +14,7 @@ from lever import Lever
 sys.path.insert(0, "/home/equansrobotic/stagiaire_1/tools/robot_arm_ik")
 from lift_carton import (
     LEFT_CHAIN, RIGHT_CHAIN, HAND_OFFSET_LEFT, HAND_OFFSET_RIGHT, solve_ik,
-    solve_arm_ik, ease, carton_face_centers, SimStateListener, world_to_robot_local,
+    solve_arm_ik, ease, SimStateListener, world_to_robot_local,
     SQUEEZE_OFFSET_Y, mirror_left_to_right,
 )
 
@@ -243,11 +243,19 @@ class LiftActionServer(Node):
         # faces du carton -- demande explicite de l'utilisateur ("je veux que
         # chaque bras vise les coordonnees du centre des faces") -- plus de
         # pinch_x/pinch_y fixes a deviner/recalibrer a chaque fois que le carton
-        # ou la marche changent. carton_face_centers() lit la scene live (jamais
-        # perime) en repere MONDE, world_to_robot_local() les convertit en
-        # repere bassin avec la pose ACTUELLE du robot (lue en direct via LCM
-        # sim_state, PAS une pose supposee/mesuree avant une marche precedente --
-        # lecon deja tiree ailleurs dans ce projet sur la derive du robot).
+        # ou la marche changent. world_to_robot_local() convertit ces coordonnees
+        # (repere MONDE) en repere bassin avec la pose ACTUELLE du robot (lue en
+        # direct via LCM sim_state, PAS une pose supposee/mesuree avant une
+        # marche precedente -- lecon deja tiree ailleurs dans ce projet sur la
+        # derive du robot).
+        # 2026-09-14 : face_gauche_monde/face_droite_monde viennent maintenant des
+        # champs g.face_gauche_x/y/z (Lift.action) -- CAPTURES UNE SEULE FOIS par
+        # chef_node.py (carton_face_centers(), appele une fois pour toute la
+        # choregraphie) et transmis ici, au lieu que ce node rappelle lui-meme
+        # carton_face_centers() a son propre demarrage -- prepare le terrain pour
+        # la vision reelle (mesure UNIQUE, pas une requete repetee a chaque node).
+        # La pose du BASSIN, elle, reste lue EN DIRECT ci-dessous (proprioception
+        # du robot, toujours disponible, pas une limite vision).
         sim_state = self._ensure_sim_state()
         pose = sim_state.pose()
         if pose is None:
@@ -255,7 +263,8 @@ class LiftActionServer(Node):
             goal_handle.abort()
             result.success = False
             return result
-        face_gauche_monde, face_droite_monde = carton_face_centers()
+        face_gauche_monde = np.array([g.face_gauche_x, g.face_gauche_y, g.face_gauche_z])
+        face_droite_monde = np.array([g.face_droite_x, g.face_droite_y, g.face_droite_z])
         pinch_L = world_to_robot_local(face_gauche_monde, pose)
         pinch_R = world_to_robot_local(face_droite_monde, pose)
         # 2026-09-14 : pinch_z n'est PAS utilise ici (approche/serrage visent le centre

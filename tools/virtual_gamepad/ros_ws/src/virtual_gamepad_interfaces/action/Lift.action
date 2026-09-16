@@ -38,6 +38,26 @@ float32 pinch_x 0.38
 float32 pinch_y 0.28
 float32 pinch_z -0.054
 float32 pinch_yaw_offset 0.0
+# 2026-09-14 : centre des 2 faces du carton (repere MONDE, metres), sur demande
+# explicite de l'utilisateur -- CAPTURE UNE SEULE FOIS par chef_node.py (via
+# carton_face_centers(), tools/robot_arm_ik/lift_carton.py) puis TRANSMISE ici,
+# au lieu que ce node (et pivot.py/depose.py, memes champs) appellent chacun
+# independamment carton_face_centers() a leur propre demarrage. Les 2 approches
+# donnaient deja le MEME resultat en simu (carton_face_centers() relit un XML
+# statique, jamais la position physique reellement simulee -- donc "dynamique"
+# uniquement au sens ou elle suit un edit manuel du fichier, pas au sens d'un
+# suivi continu), mais cette 2e forme (capture unique + transmission) est la
+# SEULE qui pourra fonctionner avec la vision reelle plus tard (ArUco fiable
+# seulement a distance -- une mesure UNIQUE en approchant, pas une requete
+# repetee a chaque node/process). La position du BASSIN (sim_state.pose(),
+# via world_to_robot_local()) reste lue EN DIRECT par ce node -- ca, c'est de
+# la proprioception du robot, toujours disponible, pas une limite vision.
+float32 face_gauche_x 0.0
+float32 face_gauche_y 0.0
+float32 face_gauche_z 0.0
+float32 face_droite_x 0.0
+float32 face_droite_y 0.0
+float32 face_droite_z 0.0
 float32 squeeze_y 0.086
 float32 lift_z 0.146
 # 2026-09-11 : point de passage ajoute AVANT l'approche finale, sur demande

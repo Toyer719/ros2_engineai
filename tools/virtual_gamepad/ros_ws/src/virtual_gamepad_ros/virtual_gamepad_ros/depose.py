@@ -14,7 +14,7 @@ from lever import Lever
 sys.path.insert(0, "/home/equansrobotic/stagiaire_1/tools/robot_arm_ik")
 from lift_carton import (
     LEFT_CHAIN, RIGHT_CHAIN, HAND_OFFSET_LEFT, HAND_OFFSET_RIGHT, solve_ik,
-    solve_arm_ik, ease, carton_face_centers, SimStateListener, world_to_robot_local,
+    solve_arm_ik, ease, SimStateListener, world_to_robot_local,
     SQUEEZE_OFFSET_Y, mirror_left_to_right,
 )
 
@@ -205,8 +205,12 @@ class DeposeActionServer(Node):
         # separe (propre Lever) qui recalculait hold_L/hold_R depuis les
         # valeurs STATIQUES g.pinch_x/g.squeeze_y/g.hold_z passees par
         # chef_node.py, au lieu du centre des faces REELLEMENT vise/tenu.
-        # On recalcule ici depuis sim_state + carton_face_centers(), comme
+        # On recalcule ici depuis sim_state + le centre des faces, comme
         # lift.py et pivot.py, pour eviter tout saut a la prise de relais.
+        # 2026-09-14 : le centre des faces vient maintenant des champs
+        # g.face_gauche_x/y/z (Depose.action) -- CAPTURES UNE SEULE FOIS par
+        # chef_node.py et transmis, au lieu que ce node rappelle lui-meme
+        # carton_face_centers() -- voir le commentaire detaille dans lift.py.
         try:
             sim_state = self._ensure_sim_state()
         except RuntimeError as exc:
@@ -227,9 +231,10 @@ class DeposeActionServer(Node):
         # tenait reellement -> saut brusque des avant-bras constate juste apres la
         # fin de la rotation. hold_L/R gardent maintenant hold_L[0]/hold_R[0] tels
         # que calcules (position REELLEMENT tenue, identique a la derniere pose de
-        # pivot.py -- meme calcul source, carton_face_centers()+world_to_robot_local
-        # a partir de la MEME pose sim_state).
-        face_gauche_monde, face_droite_monde = carton_face_centers()
+        # pivot.py -- MEMES g.face_gauche_x/y/z transmis par chef_node.py, meme
+        # pose sim_state lue en direct ici).
+        face_gauche_monde = np.array([g.face_gauche_x, g.face_gauche_y, g.face_gauche_z])
+        face_droite_monde = np.array([g.face_droite_x, g.face_droite_y, g.face_droite_z])
         hold_L = world_to_robot_local(face_gauche_monde, pose)
         hold_R = world_to_robot_local(face_droite_monde, pose)
         hold_L = np.array([hold_L[0], hold_L[1] - SQUEEZE_OFFSET_Y, g.hold_z])

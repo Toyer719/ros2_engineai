@@ -13,6 +13,9 @@ from std_msgs.msg import Bool, Float32, Int32
 sys.path.insert(0, "/home/equansrobotic/engineai_robotics_native_sdk/tools/virtual_gamepad")
 from lcm_msgs.data import GamepadKeys
 
+sys.path.insert(0, "/home/equansrobotic/stagiaire_1/tools/robot_arm_ik")
+from lift_carton import carton_face_centers
+
 from virtual_gamepad_interfaces.action import Depose, Lift, Pivot, Stand, WalkTo
 from virtual_gamepad_ros.field_topics import ANALOG_INDEX, BUTTON_INDEX, field_topic
 
@@ -198,25 +201,40 @@ class ChefNode(Node):
 
         self._publish_step(20)
         pinch_x = PROVEN_PINCH_X
+        # 2026-09-14 : capture UNIQUE des coordonnees MONDE des faces du carton --
+        # transmise ensuite a CHAQUE appel lift/pivot/depose ci-dessous (voir le
+        # champ face_gauche_x/y/z etc. dans Lift.action pour le detail complet),
+        # au lieu que chacun des 3 nodes rappelle independamment
+        # carton_face_centers() a son propre demarrage. Prepare le terrain pour
+        # la vision reelle (mesure UNIQUE possible, pas une requete repetee a
+        # chaque node -- cf discussion utilisateur du 2026-09-14).
+        face_gauche_monde, face_droite_monde = carton_face_centers()
+        face_kwargs = dict(
+            face_gauche_x=float(face_gauche_monde[0]), face_gauche_y=float(face_gauche_monde[1]),
+            face_gauche_z=float(face_gauche_monde[2]),
+            face_droite_x=float(face_droite_monde[0]), face_droite_y=float(face_droite_monde[1]),
+            face_droite_z=float(face_droite_monde[2]),
+        )
 
         self._publish_step(30)
         if not self.lift(pinch_x=pinch_x, pinch_y=PINCH_Y, pinch_z=PINCH_Z, squeeze_y=SQUEEZE_Y,
                           approach_duration=4.0, walk_stance_scale=WALK_STANCE_SCALE,
-                          only_phase="approche", release_after=False):
+                          only_phase="approche", release_after=False, **face_kwargs):
             self.get_logger().error("run_sequence : lift() a echoue (approche) -- arret.")
             return
 
         self._publish_step(40)
         if not self.lift(pinch_x=pinch_x, pinch_y=PINCH_Y, pinch_z=PINCH_Z, squeeze_y=SQUEEZE_Y,
                           squeeze_duration=5.0, walk_stance=False, only_phase="serrage",
-                          release_after=False):
+                          release_after=False, **face_kwargs):
             self.get_logger().error("run_sequence : lift() a echoue (serrage) -- arret.")
             return
 
         self._publish_step(50)
         if not self.lift(pinch_x=pinch_x, pinch_y=PINCH_Y, pinch_z=PINCH_Z, squeeze_y=SQUEEZE_Y,
                           lift_z=LIFT_Z, lift_duration=3.5, hold_seconds=1.0, walk_stance=False,
-                          walk_stance_scale=WALK_STANCE_SCALE, only_phase="levee", release_after=False):
+                          walk_stance_scale=WALK_STANCE_SCALE, only_phase="levee", release_after=False,
+                          **face_kwargs):
             self.get_logger().error("run_sequence : lift() a echoue (levee) -- arret.")
             return
 
@@ -265,7 +283,7 @@ class ChefNode(Node):
                            lift_z=LIFT_Z, angle_deg=PIVOT_ANGLE_DEG, walk_stance_scale=WALK_STANCE_SCALE,
                            pivot_duration=1.5, hold_seconds=1.0,
                            release_after=False, free_legs_for_walk=False,
-                           depivot_before_release=False):
+                           depivot_before_release=False, **face_kwargs):
             self.get_logger().error(f"run_sequence : pivot({PIVOT_ANGLE_DEG:.0f}) a echoue -- arret.")
             return
 
@@ -308,7 +326,8 @@ class ChefNode(Node):
                             hold_z=LIFT_Z, drop_z=PINCH_Z,
                             depivot_from_deg=PIVOT_ANGLE_DEG, depivot_duration=1.5,
                             tendre_duration=2.0, depose_duration=2.0,
-                            degagement_waypoint_duration=2.0, degagement_duration=2.0):
+                            degagement_waypoint_duration=2.0, degagement_duration=2.0,
+                            **face_kwargs):
             self.get_logger().error("run_sequence : depose() a echoue -- arret.")
             return
 

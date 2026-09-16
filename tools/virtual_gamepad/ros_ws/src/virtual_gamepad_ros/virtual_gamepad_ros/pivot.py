@@ -14,7 +14,7 @@ from lever import Lever
 sys.path.insert(0, "/home/equansrobotic/stagiaire_1/tools/robot_arm_ik")
 from lift_carton import (
     LEFT_CHAIN, RIGHT_CHAIN, HAND_OFFSET_LEFT, HAND_OFFSET_RIGHT, solve_ik,
-    solve_arm_ik, ease, carton_face_centers, SimStateListener, world_to_robot_local,
+    solve_arm_ik, ease, SimStateListener, world_to_robot_local,
     SQUEEZE_OFFSET_Y, mirror_left_to_right,
 )
 
@@ -25,6 +25,9 @@ from virtual_gamepad_interfaces.action import Pivot
 LEFT_JOINT_INDICES = [13, 14, 15, 16, 17]
 RIGHT_JOINT_INDICES = [18, 19, 20, 21, 22]
 WAIST_JOINT_INDEX = 12
+RETRACT_X = 0.35
+RETRACT_DURATION = 1.0
+EXTEND_DURATION = 1.0
 WAIST_KP_HOLD, WAIST_KD_HOLD = 500.0, 10.0
 # 2026-09-10 : 150/3.0 (valeur reelle) suffisait a eviter la chute quand la
 # marche precedente passait par l'ancienne emulation manette directe, mais
@@ -143,12 +146,17 @@ class PivotActionServer(Node):
             return result
 
         # 2026-09-11 : position tenue RECALCULEE dynamiquement (centre reel des
-        # faces du carton, meme technique que lift.py -- carton_face_centers()
-        # + world_to_robot_local() avec la pose ACTUELLE du robot) au lieu des
-        # anciennes cibles g.pinch_x/g.pinch_y/g.squeeze_y STATIQUES -- bug reel
-        # trouve : pivot.py (process separe, propre Lever) recalculait depuis
-        # Q_HOME avec des valeurs figees, differentes de ce que lift.py avait
-        # REELLEMENT atteint -- saut visible au relais entre les deux nodes.
+        # faces du carton) + world_to_robot_local() avec la pose ACTUELLE du
+        # robot, au lieu des anciennes cibles g.pinch_x/g.pinch_y/g.squeeze_y
+        # STATIQUES -- bug reel trouve : pivot.py (process separe, propre Lever)
+        # recalculait depuis Q_HOME avec des valeurs figees, differentes de ce
+        # que lift.py avait REELLEMENT atteint -- saut visible au relais entre
+        # les deux nodes.
+        # 2026-09-14 : face_gauche_monde/face_droite_monde viennent maintenant
+        # des champs g.face_gauche_x/y/z (Pivot.action) -- CAPTURES UNE SEULE
+        # FOIS par chef_node.py et transmis, au lieu que ce node rappelle
+        # lui-meme carton_face_centers() -- voir le commentaire detaille dans
+        # lift.py. La pose du BASSIN reste lue EN DIRECT ci-dessous.
         try:
             sim_state = self._ensure_sim_state()
         except RuntimeError as exc:
@@ -162,7 +170,8 @@ class PivotActionServer(Node):
             goal_handle.abort()
             result.success = False
             return result
-        face_gauche_monde, face_droite_monde = carton_face_centers()
+        face_gauche_monde = np.array([g.face_gauche_x, g.face_gauche_y, g.face_gauche_z])
+        face_droite_monde = np.array([g.face_droite_x, g.face_droite_y, g.face_droite_z])
         pinch_L = world_to_robot_local(face_gauche_monde, pose)
         pinch_R = world_to_robot_local(face_droite_monde, pose)
         # 2026-09-11 : lift.py serre desormais de SQUEEZE_OFFSET_Y au-dela de
@@ -189,41 +198,24 @@ class PivotActionServer(Node):
         leg_targets = [
             (idx, target * g.walk_stance_scale, kp, kd) for idx, target, kp, kd in LEG_JOINTS
         ]
-        # 2026-09-09 : 150/3.0 (valeurs qui marchent sur le VRAI robot,
-        # pivot_real.py) ne produit quasiment AUCUNE rotation mesurable en
-        # sim -- confirme via /hardware/joint_state (position[12] reste
-        # <5deg de bruit alors que la commande vise 45-180deg). Teste avec
-        # des gains bien plus forts pour voir si le controleur actif de la
-        # sim resiste juste plus que le vrai robot (pas encore confirme).
-        # 2026-09-10 : chute confirmee par telemetrie sim_state (LCM, pas
-        # les logs ROS -- ceux-la rapportaient success=True partout) pile
-        # au relachement du pivot(45deg) avec 500/10.0 + la rampe
-        # RETRACT_PINCH_X ci-dessous (x=1.30->0.35, z=0.82->0.19 en 1s,
-        # robot au sol ~13s avant reset auto du simulateur). Cause isolee
-        # par contre-essai telemetrie : repasser a 150/3.0 tout du long
-        # supprime la chute (z parfaitement stable, 0.820-0.821m sans
-        # variation) mais reproduit alors l'AUTRE probleme deja documente
-        # (quasiment pas de rotation mesurable, x ne bouge que de 6mm) --
-        # donc le gain fort n'est pas fautif pendant le MAINTIEN (ca
-        # tenait), le probleme est de le lacher d'un coup pile au moment
-        # ou les bras relachent le carton (perte brutale de la charge
-        # portee alors que le buste reste rigide) -- cf ramp-down plus bas
-        # avant le relachement, gains forts gardes seulement pendant la
-        # rotation/le maintien.
         lever.set_gains(WAIST_JOINT_INDEX, WAIST_KP_HOLD, WAIST_KD_HOLD)
 
-        # 2026-09-10 (historique) : cette section ramenait le carton pres du corps
-        # (RETRACT_PINCH_X) juste avant le pivot. Le commentaire d'origine disait deja
-        # ce retrait "inutile ici puisque le bras est deja retracte avant meme la
-        # levee -- supprime plus bas", mais le CODE n'avait en fait jamais ete
-        # supprime -- retire pour de bon le 2026-09-14, sur demande explicite de
-        # l'utilisateur ("je veux que pour tourner on garde la meme pose des bras") :
-        # ce retrait bougeait activement les bras juste avant/pendant le debut du
-        # pivot, visible comme "les avant-bras tournent" (en plus de l'entrainement
-        # rigide normal du bras par la rotation du buste, attendu et inevitable).
-        # q_squeeze_L/R restent maintenant EXACTEMENT la pose calculee plus haut
-        # (position de serrage reellement tenue, a hauteur g.lift_z), inchangee tout
-        # du long du pivot.
+        pinch_far_L = pinch_L.copy()
+        pinch_near_L = np.array([RETRACT_X, pinch_L[1], pinch_L[2]])
+        self.get_logger().info(f"rapproche le carton avant pivot ({RETRACT_DURATION:.1f}s)")
+        n_retract = max(1, int(RETRACT_DURATION * 30))
+        for i in range(n_retract + 1):
+            a = ease(i / n_retract)
+            target = pinch_far_L + a * (pinch_near_L - pinch_far_L)
+            q_squeeze_L = solve_arm_ik(LEFT_CHAIN, HAND_OFFSET_LEFT, target, q_squeeze_L,
+                                        lock_index=ELBOW_PITCH_CHAIN_INDEX,
+                                        lock_angle=Q_LEFT_HOME[ELBOW_PITCH_CHAIN_INDEX],
+                                        null_space_pref=q_squeeze_L)
+            q_squeeze_R = mirror_left_to_right(q_squeeze_L)
+            self._publish_pose(lever, q_squeeze_L, q_squeeze_R, 0.0,
+                                leg_targets, g.walk_stance_stiffness_scale)
+            time.sleep(1.0 / 30)
+
         angle_target = np.radians(g.angle_deg)
 
         self.get_logger().info(
@@ -249,6 +241,21 @@ class PivotActionServer(Node):
                                 leg_targets, g.walk_stance_stiffness_scale)
             time.sleep(step)
             elapsed += step
+
+        if not cancelled:
+            self.get_logger().info(f"tend les bras pour deposer ({EXTEND_DURATION:.1f}s)")
+            n_extend = max(1, int(EXTEND_DURATION * 30))
+            for i in range(n_extend + 1):
+                a = ease(i / n_extend)
+                target = pinch_near_L + a * (pinch_far_L - pinch_near_L)
+                q_squeeze_L = solve_arm_ik(LEFT_CHAIN, HAND_OFFSET_LEFT, target, q_squeeze_L,
+                                            lock_index=ELBOW_PITCH_CHAIN_INDEX,
+                                            lock_angle=Q_LEFT_HOME[ELBOW_PITCH_CHAIN_INDEX],
+                                            null_space_pref=q_squeeze_L)
+                q_squeeze_R = mirror_left_to_right(q_squeeze_L)
+                self._publish_pose(lever, q_squeeze_L, q_squeeze_R, angle_target,
+                                    leg_targets, g.walk_stance_stiffness_scale)
+                time.sleep(1.0 / 30)
 
         do_depivot = g.depivot_before_release or cancelled
         if do_depivot:
