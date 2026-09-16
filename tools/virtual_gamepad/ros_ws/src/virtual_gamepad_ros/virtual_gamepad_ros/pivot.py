@@ -19,7 +19,6 @@ from lift_carton import (
 )
 
 ELBOW_PITCH_CHAIN_INDEX = 3  # voir lift_carton.py::solve_arm_ik (lock_index)
-
 from virtual_gamepad_interfaces.action import Pivot
 
 LEFT_JOINT_INDICES = [13, 14, 15, 16, 17]
@@ -28,6 +27,7 @@ WAIST_JOINT_INDEX = 12
 RETRACT_X = 0.35
 RETRACT_DURATION = 1.0
 EXTEND_DURATION = 1.0
+RETREAT_GAP_Y = 0.125  # identique a lift.py -- meme chaine aim_L, voir _execute
 WAIST_KP_HOLD, WAIST_KD_HOLD = 500.0, 10.0
 # 2026-09-10 : 150/3.0 (valeur reelle) suffisait a eviter la chute quand la
 # marche precedente passait par l'ancienne emulation manette directe, mais
@@ -122,16 +122,13 @@ class PivotActionServer(Node):
         return self._sim_state
 
     def _publish_pose(self, lever, qL, qR, waist_angle, leg_targets, stiffness_scale):
-        """Republie EN UN SEUL message (via Lever, qui agrege tout ce qui a
-        deja ete touche) bras+jambes+buste -- voir note en tete de fichier."""
-        for idx, angle in zip(LEFT_JOINT_INDICES, qL):
-            lever[idx] = float(angle)
-        for idx, angle in zip(RIGHT_JOINT_INDICES, qR):
-            lever[idx] = float(angle)
-        for idx, target, kp, kd in leg_targets:
+        """Republie EN UN SEUL message (via Lever.set_batch) bras+jambes+buste --
+        voir note en tete de fichier."""
+        for idx, _, kp, kd in leg_targets:
             lever.set_gains(idx, kp * stiffness_scale, kd * stiffness_scale)
-            lever[idx] = float(target)
-        lever[WAIST_JOINT_INDEX] = float(waist_angle)
+        indices = LEFT_JOINT_INDICES + RIGHT_JOINT_INDICES + [idx for idx, *_ in leg_targets] + [WAIST_JOINT_INDEX]
+        angles = list(qL) + list(qR) + [target for _, target, *_ in leg_targets] + [waist_angle]
+        lever.set_batch(indices, angles)
 
     def _execute(self, goal_handle):
         result = Pivot.Result()
@@ -174,25 +171,34 @@ class PivotActionServer(Node):
         face_droite_monde = np.array([g.face_droite_x, g.face_droite_y, g.face_droite_z])
         pinch_L = world_to_robot_local(face_gauche_monde, pose)
         pinch_R = world_to_robot_local(face_droite_monde, pose)
+        pinch_L = np.array([pinch_L[0], pinch_L[1], g.lift_z])
+        pinch_R = np.array([pinch_R[0], pinch_R[1], g.lift_z])
         # 2026-09-11 : lift.py serre desormais de SQUEEZE_OFFSET_Y au-dela de
         # la surface (voir lift.py) -- pivot.py doit tenir la MEME position
         # serree (pas juste le centre de face) pour ne pas relacher la prise
         # au relais lift -> pivot.
-        pinch_L = np.array([pinch_L[0], pinch_L[1] - SQUEEZE_OFFSET_Y, g.lift_z])
-        pinch_R = np.array([pinch_R[0], pinch_R[1] + SQUEEZE_OFFSET_Y, g.lift_z])
-        # 2026-09-11 : solve_arm_ik (coude fige + regularisation null-space)
-        # au lieu de solve_ik standard -- sinon ce process (pivot.py, propre
-        # Lever) recalcule une posture INDEPENDANTE de celle que lift.py
-        # tenait reellement (meme position XYZ, mais coude/epaule
-        # potentiellement tres differents, cf solve_ik = "solution la plus
-        # proche du seed" et le seed ici etait Q_LEFT_HOME, PAS la posture
-        # coude-tendu de lift.py) -- saut brutal au relais, prise
-        # asymetrique/desequilibree et geste sec au relachement (constate
-        # par l'utilisateur : "le carton n'est pas equilibre... il lance le
-        # carton"). Meme convention que lift.py partout desormais.
-        q_squeeze_L = solve_arm_ik(LEFT_CHAIN, HAND_OFFSET_LEFT, pinch_L, WAYPOINT_Q_LEFT,
+        squeeze_L = np.array([pinch_L[0], pinch_L[1] - SQUEEZE_OFFSET_Y, pinch_L[2]])
+        squeeze_R = np.array([pinch_R[0], pinch_R[1] + SQUEEZE_OFFSET_Y, pinch_R[2]])
+        # 2026-09-16 : q_squeeze_L n'est plus resolu directement depuis
+        # WAYPOINT_Q_LEFT -- verifie numeriquement (test_handoff_discontinuity.py)
+        # que ca fait converger le solveur sur une branche epaule/avant-bras
+        # DIFFERENTE de celle que lift.py tient reellement (jusqu'a ~20deg
+        # d'ecart en SHOULDER_YAW pour une position de main quasi identique,
+        # <3mm), vu par l'utilisateur comme une petite rotation de l'avant-bras
+        # au relais lift -> pivot. lift.py calcule son propre q_squeeze_L en
+        # ancrant le null-space sur q_aim_L (pas WAYPOINT_Q_LEFT), lui-meme issu
+        # de RETREAT_GAP_Y -- on reconstruit ICI exactement la meme chaine
+        # (meme cible aim_L, meme seed WAYPOINT_Q_LEFT) pour que ce process
+        # independant reconverge sur une posture BIT-A-BIT IDENTIQUE (verifie :
+        # diff exactement 0.0 sur plusieurs points de test).
+        aim_L = np.array([pinch_L[0], pinch_L[1] + RETREAT_GAP_Y, pinch_L[2]])
+        q_aim_L = solve_arm_ik(LEFT_CHAIN, HAND_OFFSET_LEFT, aim_L, WAYPOINT_Q_LEFT,
+                                lock_index=ELBOW_PITCH_CHAIN_INDEX,
+                                lock_angle=Q_LEFT_HOME[ELBOW_PITCH_CHAIN_INDEX])
+        q_squeeze_L = solve_arm_ik(LEFT_CHAIN, HAND_OFFSET_LEFT, squeeze_L, q_aim_L,
                                     lock_index=ELBOW_PITCH_CHAIN_INDEX,
-                                    lock_angle=Q_LEFT_HOME[ELBOW_PITCH_CHAIN_INDEX])
+                                    lock_angle=Q_LEFT_HOME[ELBOW_PITCH_CHAIN_INDEX],
+                                    null_space_pref=q_aim_L)
         q_squeeze_R = mirror_left_to_right(q_squeeze_L)
 
         leg_targets = [
@@ -200,17 +206,18 @@ class PivotActionServer(Node):
         ]
         lever.set_gains(WAIST_JOINT_INDEX, WAIST_KP_HOLD, WAIST_KD_HOLD)
 
-        pinch_far_L = pinch_L.copy()
-        pinch_near_L = np.array([RETRACT_X, pinch_L[1], pinch_L[2]])
+        pinch_far_L = squeeze_L.copy()
+        pinch_near_L = np.array([RETRACT_X, squeeze_L[1], squeeze_L[2]])
         self.get_logger().info(f"rapproche le carton avant pivot ({RETRACT_DURATION:.1f}s)")
         n_retract = max(1, int(RETRACT_DURATION * 30))
+        retract_anchor_L = q_squeeze_L.copy()
         for i in range(n_retract + 1):
             a = ease(i / n_retract)
             target = pinch_far_L + a * (pinch_near_L - pinch_far_L)
             q_squeeze_L = solve_arm_ik(LEFT_CHAIN, HAND_OFFSET_LEFT, target, q_squeeze_L,
                                         lock_index=ELBOW_PITCH_CHAIN_INDEX,
                                         lock_angle=Q_LEFT_HOME[ELBOW_PITCH_CHAIN_INDEX],
-                                        null_space_pref=q_squeeze_L)
+                                        null_space_pref=retract_anchor_L)
             q_squeeze_R = mirror_left_to_right(q_squeeze_L)
             self._publish_pose(lever, q_squeeze_L, q_squeeze_R, 0.0,
                                 leg_targets, g.walk_stance_stiffness_scale)
@@ -245,13 +252,14 @@ class PivotActionServer(Node):
         if not cancelled:
             self.get_logger().info(f"tend les bras pour deposer ({EXTEND_DURATION:.1f}s)")
             n_extend = max(1, int(EXTEND_DURATION * 30))
+            extend_anchor_L = q_squeeze_L.copy()
             for i in range(n_extend + 1):
                 a = ease(i / n_extend)
                 target = pinch_near_L + a * (pinch_far_L - pinch_near_L)
                 q_squeeze_L = solve_arm_ik(LEFT_CHAIN, HAND_OFFSET_LEFT, target, q_squeeze_L,
                                             lock_index=ELBOW_PITCH_CHAIN_INDEX,
                                             lock_angle=Q_LEFT_HOME[ELBOW_PITCH_CHAIN_INDEX],
-                                            null_space_pref=q_squeeze_L)
+                                            null_space_pref=extend_anchor_L)
                 q_squeeze_R = mirror_left_to_right(q_squeeze_L)
                 self._publish_pose(lever, q_squeeze_L, q_squeeze_R, angle_target,
                                     leg_targets, g.walk_stance_stiffness_scale)

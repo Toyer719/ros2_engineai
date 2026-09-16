@@ -24,6 +24,7 @@ LEFT_JOINT_INDICES = [13, 14, 15, 16, 17]
 RIGHT_JOINT_INDICES = [18, 19, 20, 21, 22]
 WAIST_JOINT_INDEX = 12
 WAIST_HOLD_KP, WAIST_HOLD_KD = 80.0, 2.0
+RETREAT_GAP_Y = 0.125  # identique a lift.py -- meme chaine aim_L, voir _execute
 
 Q_LEFT_HOME = np.array([0.000879, 0.075284, -0.000233, -0.126397, -0.000033])
 Q_RIGHT_HOME = np.array([0.000885, -0.075161, 0.000241, -0.126390, 0.000033])
@@ -67,7 +68,6 @@ def _rotate_xy(point, yaw_offset):
 
 ELBOW_PITCH_CHAIN_INDEX = 3  # index de ELBOW_PITCH dans LEFT_CHAIN/RIGHT_CHAIN --
                               # voir lift_carton.py::solve_arm_ik (lock_index)
-
 
 class DeposeActionServer(Node):
     def __init__(self):
@@ -129,19 +129,18 @@ class DeposeActionServer(Node):
             lever.set_gains(idx, kp * stiffness_scale, kd * stiffness_scale)
         lever.set_gains(WAIST_JOINT_INDEX, WAIST_HOLD_KP, WAIST_HOLD_KD)
         n = max(1, int(duration * rate_hz))
+        leg_indices = [LEFT_HIP_PITCH_INDEX, RIGHT_HIP_PITCH_INDEX, LEFT_KNEE_PITCH_INDEX,
+                       RIGHT_KNEE_PITCH_INDEX, LEFT_ANKLE_PITCH_INDEX, RIGHT_ANKLE_PITCH_INDEX]
         for i in range(n + 1):
             a = _quintic_ease(i / n)
-            lever[LEFT_HIP_PITCH_INDEX] = float(a * scale * WALK_STANCE_HIP_PITCH_L)
-            lever[RIGHT_HIP_PITCH_INDEX] = float(a * scale * WALK_STANCE_HIP_PITCH_R)
-            lever[LEFT_KNEE_PITCH_INDEX] = float(a * scale * WALK_STANCE_KNEE_L)
-            lever[RIGHT_KNEE_PITCH_INDEX] = float(a * scale * WALK_STANCE_KNEE_R)
-            lever[LEFT_ANKLE_PITCH_INDEX] = float(a * scale * WALK_STANCE_ANKLE_PITCH_L)
-            lever[RIGHT_ANKLE_PITCH_INDEX] = float(a * scale * WALK_STANCE_ANKLE_PITCH_R)
-            for idx, angle in zip(LEFT_JOINT_INDICES, qL_hold):
-                lever[idx] = float(angle)
-            for idx, angle in zip(RIGHT_JOINT_INDICES, qR_hold):
-                lever[idx] = float(angle)
-            lever[WAIST_JOINT_INDEX] = float(waist_hold)
+            leg_angles = [
+                a * scale * WALK_STANCE_HIP_PITCH_L, a * scale * WALK_STANCE_HIP_PITCH_R,
+                a * scale * WALK_STANCE_KNEE_L, a * scale * WALK_STANCE_KNEE_R,
+                a * scale * WALK_STANCE_ANKLE_PITCH_L, a * scale * WALK_STANCE_ANKLE_PITCH_R,
+            ]
+            indices = leg_indices + LEFT_JOINT_INDICES + RIGHT_JOINT_INDICES + [WAIST_JOINT_INDEX]
+            angles = leg_angles + list(qL_hold) + list(qR_hold) + [float(waist_hold)]
+            lever.set_batch(indices, angles)
             time.sleep(1.0 / rate_hz)
 
     def _move_arms(self, lever, qL0, qL1, qR0, qR1, duration, rate_hz=30):
@@ -150,10 +149,7 @@ class DeposeActionServer(Node):
             a = ease(i / n)
             qL = qL0 + a * (qL1 - qL0)
             qR = qR0 + a * (qR1 - qR0)
-            for idx, angle in zip(LEFT_JOINT_INDICES, qL):
-                lever[idx] = float(angle)
-            for idx, angle in zip(RIGHT_JOINT_INDICES, qR):
-                lever[idx] = float(angle)
+            lever.set_batch(LEFT_JOINT_INDICES + RIGHT_JOINT_INDICES, list(qL) + list(qR))
             time.sleep(1.0 / rate_hz)
         return qL, qR
 
@@ -166,14 +162,15 @@ class DeposeActionServer(Node):
         posture flechie (x`scale`) vers droites (angle 0), interpolation quintique
         PARCOURUE A L'ENVERS (a=1->0)."""
         n = max(1, int(duration * rate_hz))
+        leg_indices = [LEFT_HIP_PITCH_INDEX, RIGHT_HIP_PITCH_INDEX, LEFT_KNEE_PITCH_INDEX,
+                       RIGHT_KNEE_PITCH_INDEX, LEFT_ANKLE_PITCH_INDEX, RIGHT_ANKLE_PITCH_INDEX]
         for i in range(n + 1):
             a = 1.0 - _quintic_ease(i / n)
-            lever[LEFT_HIP_PITCH_INDEX] = float(a * scale * WALK_STANCE_HIP_PITCH_L)
-            lever[RIGHT_HIP_PITCH_INDEX] = float(a * scale * WALK_STANCE_HIP_PITCH_R)
-            lever[LEFT_KNEE_PITCH_INDEX] = float(a * scale * WALK_STANCE_KNEE_L)
-            lever[RIGHT_KNEE_PITCH_INDEX] = float(a * scale * WALK_STANCE_KNEE_R)
-            lever[LEFT_ANKLE_PITCH_INDEX] = float(a * scale * WALK_STANCE_ANKLE_PITCH_L)
-            lever[RIGHT_ANKLE_PITCH_INDEX] = float(a * scale * WALK_STANCE_ANKLE_PITCH_R)
+            lever.set_batch(leg_indices, [
+                a * scale * WALK_STANCE_HIP_PITCH_L, a * scale * WALK_STANCE_HIP_PITCH_R,
+                a * scale * WALK_STANCE_KNEE_L, a * scale * WALK_STANCE_KNEE_R,
+                a * scale * WALK_STANCE_ANKLE_PITCH_L, a * scale * WALK_STANCE_ANKLE_PITCH_R,
+            ])
             time.sleep(1.0 / rate_hz)
 
     def _release(self, lever, qL, qR, ramp_seconds, rate_hz=30):
@@ -182,10 +179,7 @@ class DeposeActionServer(Node):
             n = max(1, int(ramp_seconds * rate_hz))
             for i in range(n + 1):
                 lever.set_weight(1.0 - i / n)
-                for idx, angle in zip(LEFT_JOINT_INDICES, qL):
-                    lever[idx] = float(angle)
-                for idx, angle in zip(RIGHT_JOINT_INDICES, qR):
-                    lever[idx] = float(angle)
+                lever.set_batch(LEFT_JOINT_INDICES + RIGHT_JOINT_INDICES, list(qL) + list(qR))
                 time.sleep(1.0 / rate_hz)
         lever.release()
 
@@ -235,19 +229,28 @@ class DeposeActionServer(Node):
         # pose sim_state lue en direct ici).
         face_gauche_monde = np.array([g.face_gauche_x, g.face_gauche_y, g.face_gauche_z])
         face_droite_monde = np.array([g.face_droite_x, g.face_droite_y, g.face_droite_z])
-        hold_L = world_to_robot_local(face_gauche_monde, pose)
-        hold_R = world_to_robot_local(face_droite_monde, pose)
-        hold_L = np.array([hold_L[0], hold_L[1] - SQUEEZE_OFFSET_Y, g.hold_z])
-        hold_R = np.array([hold_R[0], hold_R[1] + SQUEEZE_OFFSET_Y, g.hold_z])
-        # seed = WAYPOINT_Q_LEFT/RIGHT (posture "coudes vers l'arriere",
-        # PROCHE de ce que lift.py/pivot.py tenaient reellement) au lieu de
-        # Q_LEFT_HOME (posture de repos, tres differente) -- meme raison
-        # que le fix identique dans pivot.py (evite un saut d'epaule visible
-        # au relais, constate par l'utilisateur : "les bras pivotent...
-        # 2 fois un serrage").
-        qL_hold = solve_arm_ik(LEFT_CHAIN, HAND_OFFSET_LEFT, hold_L, WAYPOINT_Q_LEFT,
+        pinch_L = world_to_robot_local(face_gauche_monde, pose)
+        pinch_R = world_to_robot_local(face_droite_monde, pose)
+        pinch_L = np.array([pinch_L[0], pinch_L[1], g.hold_z])
+        pinch_R = np.array([pinch_R[0], pinch_R[1], g.hold_z])
+        hold_L = np.array([pinch_L[0], pinch_L[1] - SQUEEZE_OFFSET_Y, pinch_L[2]])
+        hold_R = np.array([pinch_R[0], pinch_R[1] + SQUEEZE_OFFSET_Y, pinch_R[2]])
+        # 2026-09-16 : qL_hold n'est plus resolu directement depuis WAYPOINT_Q_LEFT --
+        # verifie numeriquement (comme pour le meme fix dans pivot.py) que ca fait
+        # converger le solveur sur une branche epaule/avant-bras DIFFERENTE de celle
+        # que lift.py/pivot.py tiennent reellement (jusqu'a ~20deg d'ecart en
+        # SHOULDER_YAW pour une position de main quasi identique). lift.py ancre son
+        # propre solve sur q_aim_L (issu de RETREAT_GAP_Y), pas sur WAYPOINT_Q_LEFT --
+        # on reconstruit ICI exactement la meme chaine pour reconverger sur une
+        # posture BIT-A-BIT IDENTIQUE (verifie : diff exactement 0.0).
+        aim_L = np.array([pinch_L[0], pinch_L[1] + RETREAT_GAP_Y, pinch_L[2]])
+        q_aim_L = solve_arm_ik(LEFT_CHAIN, HAND_OFFSET_LEFT, aim_L, WAYPOINT_Q_LEFT,
                                 lock_index=ELBOW_PITCH_CHAIN_INDEX,
                                 lock_angle=Q_LEFT_HOME[ELBOW_PITCH_CHAIN_INDEX])
+        qL_hold = solve_arm_ik(LEFT_CHAIN, HAND_OFFSET_LEFT, hold_L, q_aim_L,
+                                lock_index=ELBOW_PITCH_CHAIN_INDEX,
+                                lock_angle=Q_LEFT_HOME[ELBOW_PITCH_CHAIN_INDEX],
+                                null_space_pref=q_aim_L)
         qR_hold = mirror_left_to_right(qL_hold)
         waist_hold = np.radians(g.depivot_from_deg)
 
@@ -265,11 +268,8 @@ class DeposeActionServer(Node):
         # ci-dessus (si walk_stance) -- republie ici une derniere fois pour
         # couvrir le cas walk_stance=false (jamais publie sinon).
         q_squeeze_L, q_squeeze_R = qL_hold, qR_hold
-        for idx, angle in zip(LEFT_JOINT_INDICES, q_squeeze_L):
-            lever[idx] = float(angle)
-        for idx, angle in zip(RIGHT_JOINT_INDICES, q_squeeze_R):
-            lever[idx] = float(angle)
-        lever[WAIST_JOINT_INDEX] = float(waist_hold)
+        lever.set_batch(LEFT_JOINT_INDICES + RIGHT_JOINT_INDICES + [WAIST_JOINT_INDEX],
+                         list(q_squeeze_L) + list(q_squeeze_R) + [float(waist_hold)])
 
         self.get_logger().info(
             f"tendre les bras -- coudes redresses sur place, meme position de main "
@@ -297,10 +297,7 @@ class DeposeActionServer(Node):
                                lock_angle=Q_LEFT_HOME[ELBOW_PITCH_CHAIN_INDEX], iters=30,
                                null_space_pref=q_drop_start_L)
             qR = mirror_left_to_right(qL)
-            for idx, angle in zip(LEFT_JOINT_INDICES, qL):
-                lever[idx] = float(angle)
-            for idx, angle in zip(RIGHT_JOINT_INDICES, qR):
-                lever[idx] = float(angle)
+            lever.set_batch(LEFT_JOINT_INDICES + RIGHT_JOINT_INDICES, list(qL) + list(qR))
             time.sleep(1.0 / 30)
 
         # 2026-09-11 : "tendre les bras" AVANT relachement -- sur demande
@@ -370,10 +367,7 @@ class DeposeActionServer(Node):
                                lock_angle=Q_LEFT_HOME[ELBOW_PITCH_CHAIN_INDEX], iters=30,
                                null_space_pref=q_retreat_start_L)
             qR = mirror_left_to_right(qL)
-            for idx, angle in zip(LEFT_JOINT_INDICES, qL):
-                lever[idx] = float(angle)
-            for idx, angle in zip(RIGHT_JOINT_INDICES, qR):
-                lever[idx] = float(angle)
+            lever.set_batch(LEFT_JOINT_INDICES + RIGHT_JOINT_INDICES, list(qL) + list(qR))
             time.sleep(1.0 / 30)
 
         self.get_logger().info(
@@ -383,24 +377,35 @@ class DeposeActionServer(Node):
         )
         qL, qR = self._move_arms(lever, qL, WAYPOINT_Q_LEFT, qR, WAYPOINT_Q_RIGHT,
                                   g.degagement_waypoint_duration)
-        self.get_logger().info(f"degagement -- retour bras home ({g.degagement_duration:.1f}s)")
-        qL, qR = self._move_arms(lever, qL, Q_LEFT_HOME, qR, Q_RIGHT_HOME, g.degagement_duration)
 
         if g.depivot_from_deg != 0.0:
+            # 2026-09-16 : depivot AVANT le retour bras home (etait apres) --
+            # rapporte par l'utilisateur : "grosse perte d'equilibre" visible
+            # pile quand les bras reviennent le long du corps, meme a vitesse
+            # normale (donc pas un souci de vitesse/elan). Hypothese : les bras
+            # arrivaient a la posture Q_HOME (repliee contre le corps) pendant
+            # que le buste etait ENCORE tourne (ex: 90deg) -- masse des bras
+            # decalee par rapport aux pieds (qui eux n'ont pas tourne), donc
+            # desequilibre STATIQUE meme sans mouvement rapide. Le carton est
+            # deja lache a ce stade (voir "degagement -- coudes vers
+            # l'arriere" ci-dessus), donc redresser le buste avant plutot
+            # qu'apres ne pose pas le risque de chute-avec-charge deja gere
+            # dans pivot.py. VALIDE en sim (utilisateur : "l'inversion a l'air
+            # nickel").
             self.get_logger().info(
                 f"depivot -- {g.depivot_from_deg:.0f}deg -> 0deg ({g.depivot_duration:.1f}s), "
-                "carton deja lache, bras replies -- buste seul"
+                "carton deja lache, buste seul (avant retour bras home)"
             )
             n_depivot = max(1, int(g.depivot_duration * 30))
             for i in range(n_depivot + 1):
                 a = ease(i / n_depivot)
                 waist = (1.0 - a) * waist_hold
-                for idx, angle in zip(LEFT_JOINT_INDICES, qL):
-                    lever[idx] = float(angle)
-                for idx, angle in zip(RIGHT_JOINT_INDICES, qR):
-                    lever[idx] = float(angle)
-                lever[WAIST_JOINT_INDEX] = float(waist)
+                lever.set_batch(LEFT_JOINT_INDICES + RIGHT_JOINT_INDICES + [WAIST_JOINT_INDEX],
+                                 list(qL) + list(qR) + [float(waist)])
                 time.sleep(1.0 / 30)
+
+        self.get_logger().info(f"degagement -- retour bras home ({g.degagement_duration:.1f}s)")
+        qL, qR = self._move_arms(lever, qL, Q_LEFT_HOME, qR, Q_RIGHT_HOME, g.degagement_duration)
 
         if g.walk_stance:
             self.get_logger().info(

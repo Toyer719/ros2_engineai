@@ -22,7 +22,6 @@ from virtual_gamepad_interfaces.action import Lift
 
 ELBOW_PITCH_CHAIN_INDEX = 3  # index de ELBOW_PITCH dans LEFT_CHAIN/RIGHT_CHAIN --
                               # voir lift_carton.py::solve_arm_ik (lock_index)
-
 LEFT_JOINT_INDICES = [13, 14, 15, 16, 17]
 RIGHT_JOINT_INDICES = [18, 19, 20, 21, 22]
 
@@ -133,14 +132,15 @@ class LiftActionServer(Node):
         ]:
             lever.set_gains(idx, kp * stiffness_scale, kd * stiffness_scale)
         n = max(1, int(duration * rate_hz))
+        leg_indices = [LEFT_HIP_PITCH_INDEX, RIGHT_HIP_PITCH_INDEX, LEFT_KNEE_PITCH_INDEX,
+                       RIGHT_KNEE_PITCH_INDEX, LEFT_ANKLE_PITCH_INDEX, RIGHT_ANKLE_PITCH_INDEX]
         for i in range(n + 1):
             a = _quintic_ease(i / n)
-            lever[LEFT_HIP_PITCH_INDEX] = float(a * scale * WALK_STANCE_HIP_PITCH_L)
-            lever[RIGHT_HIP_PITCH_INDEX] = float(a * scale * WALK_STANCE_HIP_PITCH_R)
-            lever[LEFT_KNEE_PITCH_INDEX] = float(a * scale * WALK_STANCE_KNEE_L)
-            lever[RIGHT_KNEE_PITCH_INDEX] = float(a * scale * WALK_STANCE_KNEE_R)
-            lever[LEFT_ANKLE_PITCH_INDEX] = float(a * scale * WALK_STANCE_ANKLE_PITCH_L)
-            lever[RIGHT_ANKLE_PITCH_INDEX] = float(a * scale * WALK_STANCE_ANKLE_PITCH_R)
+            lever.set_batch(leg_indices, [
+                a * scale * WALK_STANCE_HIP_PITCH_L, a * scale * WALK_STANCE_HIP_PITCH_R,
+                a * scale * WALK_STANCE_KNEE_L, a * scale * WALK_STANCE_KNEE_R,
+                a * scale * WALK_STANCE_ANKLE_PITCH_L, a * scale * WALK_STANCE_ANKLE_PITCH_R,
+            ])
             time.sleep(1.0 / rate_hz)
 
     def _move_arms(self, lever, qL0, qL1, qR0, qR1, duration, rate_hz=30):
@@ -149,10 +149,7 @@ class LiftActionServer(Node):
             a = ease(i / n)
             qL = qL0 + a * (qL1 - qL0)
             qR = qR0 + a * (qR1 - qR0)
-            for idx, angle in zip(LEFT_JOINT_INDICES, qL):
-                lever[idx] = float(angle)
-            for idx, angle in zip(RIGHT_JOINT_INDICES, qR):
-                lever[idx] = float(angle)
+            lever.set_batch(LEFT_JOINT_INDICES + RIGHT_JOINT_INDICES, list(qL) + list(qR))
             time.sleep(1.0 / rate_hz)
         return qL, qR
 
@@ -163,10 +160,7 @@ class LiftActionServer(Node):
         while elapsed < duration:
             if goal_handle.is_cancel_requested:
                 return False
-            for idx, angle in zip(LEFT_JOINT_INDICES, qL):
-                lever[idx] = float(angle)
-            for idx, angle in zip(RIGHT_JOINT_INDICES, qR):
-                lever[idx] = float(angle)
+            lever.set_batch(LEFT_JOINT_INDICES + RIGHT_JOINT_INDICES, list(qL) + list(qR))
             time.sleep(step)
             elapsed += step
         return True
@@ -179,14 +173,15 @@ class LiftActionServer(Node):
         override alors qu'ils sont loin de la cible native du controleur
         actif produit un saut brutal a la reprise de controle."""
         n = max(1, int(duration * rate_hz))
+        leg_indices = [LEFT_HIP_PITCH_INDEX, RIGHT_HIP_PITCH_INDEX, LEFT_KNEE_PITCH_INDEX,
+                       RIGHT_KNEE_PITCH_INDEX, LEFT_ANKLE_PITCH_INDEX, RIGHT_ANKLE_PITCH_INDEX]
         for i in range(n + 1):
             a = 1.0 - _quintic_ease(i / n)
-            lever[LEFT_HIP_PITCH_INDEX] = float(a * scale * WALK_STANCE_HIP_PITCH_L)
-            lever[RIGHT_HIP_PITCH_INDEX] = float(a * scale * WALK_STANCE_HIP_PITCH_R)
-            lever[LEFT_KNEE_PITCH_INDEX] = float(a * scale * WALK_STANCE_KNEE_L)
-            lever[RIGHT_KNEE_PITCH_INDEX] = float(a * scale * WALK_STANCE_KNEE_R)
-            lever[LEFT_ANKLE_PITCH_INDEX] = float(a * scale * WALK_STANCE_ANKLE_PITCH_L)
-            lever[RIGHT_ANKLE_PITCH_INDEX] = float(a * scale * WALK_STANCE_ANKLE_PITCH_R)
+            lever.set_batch(leg_indices, [
+                a * scale * WALK_STANCE_HIP_PITCH_L, a * scale * WALK_STANCE_HIP_PITCH_R,
+                a * scale * WALK_STANCE_KNEE_L, a * scale * WALK_STANCE_KNEE_R,
+                a * scale * WALK_STANCE_ANKLE_PITCH_L, a * scale * WALK_STANCE_ANKLE_PITCH_R,
+            ])
             time.sleep(1.0 / rate_hz)
 
     def _release(self, lever, qL, qR, ramp_seconds, rate_hz=30):
@@ -197,10 +192,7 @@ class LiftActionServer(Node):
             n = max(1, int(ramp_seconds * rate_hz))
             for i in range(n + 1):
                 lever.set_weight(1.0 - i / n)
-                for idx, angle in zip(LEFT_JOINT_INDICES, qL):
-                    lever[idx] = float(angle)
-                for idx, angle in zip(RIGHT_JOINT_INDICES, qR):
-                    lever[idx] = float(angle)
+                lever.set_batch(LEFT_JOINT_INDICES + RIGHT_JOINT_INDICES, list(qL) + list(qR))
                 time.sleep(1.0 / rate_hz)
         lever.release()
 
@@ -361,10 +353,7 @@ class LiftActionServer(Node):
                 f"(gauche={np.round(squeeze_L, 3)}, droite={np.round(squeeze_R, 3)}), "
                 "suppose deja atteinte par un appel precedent."
             )
-            for idx, angle in zip(LEFT_JOINT_INDICES, q_squeeze_L):
-                lever[idx] = float(angle)
-            for idx, angle in zip(RIGHT_JOINT_INDICES, q_squeeze_R):
-                lever[idx] = float(angle)
+            lever.set_batch(LEFT_JOINT_INDICES + RIGHT_JOINT_INDICES, list(q_squeeze_L) + list(q_squeeze_R))
             self._hold(lever, q_squeeze_L, q_squeeze_R, goal_handle, 1.0)
 
         self.get_logger().info(
@@ -384,10 +373,7 @@ class LiftActionServer(Node):
                                lock_angle=Q_LEFT_HOME[ELBOW_PITCH_CHAIN_INDEX], iters=30,
                                null_space_pref=q_squeeze_L)
             qR = mirror_left_to_right(qL)
-            for idx, angle in zip(LEFT_JOINT_INDICES, qL):
-                lever[idx] = float(angle)
-            for idx, angle in zip(RIGHT_JOINT_INDICES, qR):
-                lever[idx] = float(angle)
+            lever.set_batch(LEFT_JOINT_INDICES + RIGHT_JOINT_INDICES, list(qL) + list(qR))
             time.sleep(1.0 / 30)
 
         self.get_logger().info(f"maintien -- {g.hold_seconds:.1f}s")
@@ -413,10 +399,7 @@ class LiftActionServer(Node):
                                    lock_angle=Q_LEFT_HOME[ELBOW_PITCH_CHAIN_INDEX], iters=30,
                                    null_space_pref=q_start_L)
                 qR = mirror_left_to_right(qL)
-                for idx, angle in zip(LEFT_JOINT_INDICES, qL):
-                    lever[idx] = float(angle)
-                for idx, angle in zip(RIGHT_JOINT_INDICES, qR):
-                    lever[idx] = float(angle)
+                lever.set_batch(LEFT_JOINT_INDICES + RIGHT_JOINT_INDICES, list(qL) + list(qR))
                 time.sleep(1.0 / 30)
             for idx in LEFT_JOINT_INDICES + RIGHT_JOINT_INDICES:
                 lever.set_gains(idx, stiffness=250.0)
