@@ -185,16 +185,13 @@ def run_lift_and_pivot(node, lever, args):
 
     _checkpoint(f"degagement -- coudes vers l'arriere ({args.degagement_waypoint_duration:.1f}s)",
                 confirm)
-    qL, qR = move_arms(lever, qL, WAYPOINT_Q_LEFT, qR, WAYPOINT_Q_RIGHT,
-                        args.degagement_waypoint_duration, dry_run=args.dry_run)
-
-    _checkpoint(f"retour bras le long du corps ({args.retreat_duration:.1f}s), "
-                "avant le depivot", confirm)
-    qL, qR = move_arms(lever, qL, Q_LEFT_HOME, qR, Q_RIGHT_HOME, args.retreat_duration,
-                        dry_run=args.dry_run)
+    current_hand_L = forward_kinematics(LEFT_CHAIN, HAND_OFFSET_LEFT, qL)
+    waypoint_hand_L = forward_kinematics(LEFT_CHAIN, HAND_OFFSET_LEFT, WAYPOINT_Q_LEFT)
+    qL, qR = cartesian_ramp(lever, qL, wrist_rotation, current_hand_L, waypoint_hand_L,
+                             qL, qL, args.degagement_waypoint_duration, args.dry_run)
 
     _checkpoint(f"depivot -- {args.angle_deg:.0f}deg -> 0deg ({args.pivot_duration:.1f}s), "
-                "CARTON DEJA LACHE, bras replies -- buste seul", confirm)
+                "CARTON DEJA LACHE, avant le retour des bras", confirm)
     for i in range(n + 1):
         a = _pivot_ease(i / n)
         waist = (1.0 - a) * angle_target
@@ -204,6 +201,11 @@ def run_lift_and_pivot(node, lever, args):
             continue
         lever[WAIST_JOINT_INDEX] = float(waist)
         time.sleep(1.0 / RATE_HZ)
+
+    _checkpoint(f"retour bras le long du corps ({args.retreat_duration:.1f}s), "
+                "buste deja droit", confirm)
+    qL, qR = move_arms(lever, qL, Q_LEFT_HOME, qR, Q_RIGHT_HOME, args.retreat_duration,
+                        dry_run=args.dry_run)
 
     if not args.dry_run and walk_stance_scale > 0:
         _checkpoint("redressement genoux -- avant relachement final", confirm)
@@ -230,23 +232,23 @@ def _build_arg_parser():
     parser.add_argument("--wrist-rotation-deg", type=float, default=ELBOW_YAW_ROTATION_DEG)
     parser.add_argument("--walk-stance-scale", type=float, default=WALK_STANCE_SCALE)
     parser.add_argument("--angle-deg", type=float, default=20.0)
-    parser.add_argument("--pivot-duration", type=float, default=4.0)
-    parser.add_argument("--hold-seconds", type=float, default=1.5)
+    parser.add_argument("--pivot-duration", type=float, default=3.0)
+    parser.add_argument("--hold-seconds", type=float, default=1.1)
     parser.add_argument("--retract-x", type=float, default=0.19)
     parser.add_argument("--depose-x", type=float, default=0.40)
-    parser.add_argument("--retract-duration", type=float, default=1.0)
-    parser.add_argument("--extend-duration", type=float, default=1.0)
-    parser.add_argument("--release-ramp-seconds", type=float, default=1.5)
+    parser.add_argument("--retract-duration", type=float, default=0.7)
+    parser.add_argument("--extend-duration", type=float, default=0.7)
+    parser.add_argument("--release-ramp-seconds", type=float, default=1.1)
     parser.add_argument("--pre-release-drop", type=float, default=0.03)
-    parser.add_argument("--pre-release-drop-duration", type=float, default=2.0)
+    parser.add_argument("--pre-release-drop-duration", type=float, default=1.5)
     parser.add_argument("--depose-duration", type=float, default=4.0)
-    parser.add_argument("--open-duration", type=float, default=2.0)
+    parser.add_argument("--open-duration", type=float, default=1.5)
     parser.add_argument("--ecartement-gap-y", type=float, default=0.025)
-    parser.add_argument("--ecartement-duration", type=float, default=2.0)
+    parser.add_argument("--ecartement-duration", type=float, default=1.5)
     parser.add_argument("--retreat-back-x", type=float, default=0.19)
-    parser.add_argument("--retreat-back-duration", type=float, default=2.0)
-    parser.add_argument("--degagement-waypoint-duration", type=float, default=2.0)
-    parser.add_argument("--retreat-duration", type=float, default=2.0)
+    parser.add_argument("--retreat-back-duration", type=float, default=1.5)
+    parser.add_argument("--degagement-waypoint-duration", type=float, default=1.5)
+    parser.add_argument("--retreat-duration", type=float, default=1.5)
     parser.add_argument("--skip-motion-state", action="store_true")
     parser.add_argument("--only-phase", choices=["approche", "serrage", "levee", "pivot"], default=None)
     parser.add_argument("--dry-run", action="store_true")
