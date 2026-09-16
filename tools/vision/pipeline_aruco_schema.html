@@ -1,0 +1,428 @@
+<title>Pipeline vision ArUco</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap');
+
+  :root{
+    --bg:#f4f5f0;
+    --surface:#ffffff;
+    --surface-2:#ecefe6;
+    --ink:#1a2420;
+    --ink-dim:#54614f;
+    --border:#d7dbcd;
+    --live:#1c7c6c;
+    --live-soft:#e2f1ea;
+    --live-ink:#0f4a41;
+    --fixed:#a6591a;
+    --fixed-soft:#f7ead9;
+    --fixed-ink:#6b3a10;
+    --code-bg:#10201b;
+    --code-ink:#d9ede4;
+    --code-dim:#7fa998;
+    --arrow:#9aa595;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#12160f;
+      --surface:#1a201a;
+      --surface-2:#212820;
+      --ink:#e6ece0;
+      --ink-dim:#a6b39e;
+      --border:#333c2f;
+      --live:#57d8bd;
+      --live-soft:#193531;
+      --live-ink:#8fe8d3;
+      --fixed:#eaa262;
+      --fixed-soft:#3a2915;
+      --fixed-ink:#f0bd8c;
+      --code-bg:#0b120e;
+      --code-ink:#c9e6d9;
+      --code-dim:#5e8a78;
+      --arrow:#4a564a;
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#12160f;
+    --surface:#1a201a;
+    --surface-2:#212820;
+    --ink:#e6ece0;
+    --ink-dim:#a6b39e;
+    --border:#333c2f;
+    --live:#57d8bd;
+    --live-soft:#193531;
+    --live-ink:#8fe8d3;
+    --fixed:#eaa262;
+    --fixed-soft:#3a2915;
+    --fixed-ink:#f0bd8c;
+    --code-bg:#0b120e;
+    --code-ink:#c9e6d9;
+    --code-dim:#5e8a78;
+    --arrow:#4a564a;
+  }
+
+  *{box-sizing:border-box;}
+  body{
+    background:var(--bg);
+    color:var(--ink);
+    font-family:'IBM Plex Sans', system-ui, sans-serif;
+    padding-inline:20px;
+    padding-block:40px 64px;
+  }
+  .page{
+    max-width:760px;
+    margin-inline:auto;
+    display:flex;
+    flex-direction:column;
+    gap:36px;
+  }
+
+  /* header */
+  .eyebrow{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:0.78rem;
+    letter-spacing:0.09em;
+    text-transform:uppercase;
+    color:var(--ink-dim);
+  }
+  h1{
+    font-family:'Archivo', sans-serif;
+    font-weight:800;
+    font-size:clamp(1.7rem, 4vw, 2.35rem);
+    line-height:1.12;
+    letter-spacing:-0.01em;
+    text-wrap:balance;
+    margin:0.35em 0 0.4em;
+  }
+  .lede{
+    font-size:1.02rem;
+    line-height:1.62;
+    color:var(--ink-dim);
+    max-width:62ch;
+  }
+  .lede code{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:0.92em;
+    background:var(--surface-2);
+    padding:0.1em 0.35em;
+    border-radius:4px;
+  }
+
+  /* legend */
+  .legend{
+    display:flex;
+    flex-wrap:wrap;
+    gap:10px;
+  }
+  .legend .chip{
+    display:flex;
+    align-items:center;
+    gap:8px;
+    font-family:'IBM Plex Mono', monospace;
+    font-size:0.82rem;
+    padding:7px 13px 7px 10px;
+    border-radius:999px;
+    border:1px solid var(--border);
+    background:var(--surface);
+  }
+  .legend .dot{width:9px;height:9px;border-radius:50%;flex:none;}
+  .legend .dot.live{background:var(--live);}
+  .legend .dot.fixed{background:var(--fixed);}
+
+  /* pipeline */
+  .pipeline{
+    display:flex;
+    flex-direction:column;
+    position:relative;
+  }
+  .stage{
+    display:grid;
+    grid-template-columns:52px 1fr;
+    gap:18px;
+    padding-block:22px;
+  }
+  .stage + .stage{border-top:1px dashed var(--border);}
+  .stage-num{
+    font-family:'Archivo', sans-serif;
+    font-weight:800;
+    font-size:1.05rem;
+    color:var(--ink-dim);
+    padding-top:2px;
+  }
+  .stage-body{display:flex; flex-direction:column; gap:8px;}
+  .stage-head{
+    display:flex;
+    align-items:baseline;
+    gap:10px;
+    flex-wrap:wrap;
+  }
+  .stage-title{
+    font-family:'Archivo', sans-serif;
+    font-weight:700;
+    font-size:1.14rem;
+  }
+  .tag{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:0.7rem;
+    letter-spacing:0.04em;
+    text-transform:uppercase;
+    padding:2px 8px;
+    border-radius:999px;
+    font-weight:500;
+  }
+  .tag.live{background:var(--live-soft); color:var(--live-ink);}
+  .tag.fixed{background:var(--fixed-soft); color:var(--fixed-ink);}
+  .stage-desc{
+    color:var(--ink-dim);
+    line-height:1.58;
+    max-width:60ch;
+    font-size:0.97rem;
+  }
+  .stage-desc b{color:var(--ink); font-weight:600;}
+  pre.code{
+    background:var(--code-bg);
+    color:var(--code-ink);
+    font-family:'IBM Plex Mono', monospace;
+    font-size:0.82rem;
+    line-height:1.55;
+    padding:13px 15px;
+    border-radius:8px;
+    overflow-x:auto;
+    margin:2px 0 0;
+  }
+  pre.code .c{color:var(--code-dim);}
+
+  /* chain diagram */
+  .chain-box{
+    background:var(--surface);
+    border:1px solid var(--border);
+    border-radius:12px;
+    padding:22px 20px;
+    display:flex;
+    flex-direction:column;
+    gap:16px;
+  }
+  .chain-row{
+    display:flex;
+    align-items:center;
+    flex-wrap:wrap;
+    gap:8px;
+    font-family:'IBM Plex Mono', monospace;
+    font-size:0.86rem;
+  }
+  .chain-term{
+    padding:6px 11px;
+    border-radius:7px;
+    white-space:nowrap;
+  }
+  .chain-term.live{background:var(--live-soft); color:var(--live-ink);}
+  .chain-term.fixed{background:var(--fixed-soft); color:var(--fixed-ink);}
+  .chain-op{color:var(--ink-dim); font-weight:500;}
+  .chain-eq-label{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:0.76rem;
+    color:var(--ink-dim);
+    border-top:1px solid var(--border);
+    padding-top:12px;
+  }
+
+  /* output readout */
+  .outputs{
+    display:grid;
+    grid-template-columns:repeat(auto-fit, minmax(150px, 1fr));
+    gap:10px;
+  }
+  .out-cell{
+    background:var(--live-soft);
+    color:var(--live-ink);
+    border-radius:8px;
+    padding:11px 13px;
+    font-family:'IBM Plex Mono', monospace;
+  }
+  .out-cell .k{font-size:0.72rem; opacity:0.8; text-transform:uppercase; letter-spacing:0.04em;}
+  .out-cell .v{font-size:1.0rem; font-weight:500; font-variant-numeric:tabular-nums;}
+
+  /* downstream */
+  .downstream{
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    gap:10px;
+  }
+  .down-arrow{
+    font-family:'IBM Plex Mono', monospace;
+    color:var(--arrow);
+    font-size:1.1rem;
+  }
+  .consumers{
+    display:flex;
+    flex-wrap:wrap;
+    gap:10px;
+    justify-content:center;
+  }
+  .consumer{
+    background:var(--surface-2);
+    border:1px solid var(--border);
+    border-radius:9px;
+    padding:10px 16px;
+    text-align:center;
+    font-family:'IBM Plex Mono', monospace;
+    font-size:0.84rem;
+  }
+  .consumer .name{font-weight:500; color:var(--ink);}
+  .consumer .role{font-size:0.72rem; color:var(--ink-dim); margin-top:2px;}
+
+  /* footnote */
+  .note{
+    border-left:3px solid var(--fixed);
+    background:var(--fixed-soft);
+    color:var(--fixed-ink);
+    padding:13px 16px;
+    border-radius:0 8px 8px 0;
+    font-size:0.92rem;
+    line-height:1.55;
+  }
+  .note b{font-weight:600;}
+
+  @media (max-width: 460px){
+    .stage{grid-template-columns:34px 1fr; gap:12px;}
+  }
+</style>
+
+<div class="page">
+
+  <header>
+    <div class="eyebrow">PM01 · perception embarquée · camera bassin</div>
+    <h1>Du marqueur ArUco aux coordonnées d'IK</h1>
+    <p class="lede">
+      Une seule chaîne de repères rigides, pas de calibration multi-points : la caméra
+      détecte le marqueur à chaque image, et deux transformations mesurées une seule fois
+      complètent le trajet jusqu'aux points de préhension du carton, injectés directement
+      dans <code>Lift</code>/<code>Pivot</code>/<code>Depose</code>.
+    </p>
+  </header>
+
+  <div class="legend">
+    <span class="chip"><span class="dot fixed"></span>mesuré une fois, au montage</span>
+    <span class="chip"><span class="dot live"></span>recalculé à chaque frame</span>
+  </div>
+
+  <div class="pipeline">
+
+    <div class="stage">
+      <div class="stage-num">01</div>
+      <div class="stage-body">
+        <div class="stage-head">
+          <span class="stage-title">Capture</span>
+          <span class="tag fixed">fixe</span>
+        </div>
+        <p class="stage-desc">
+          La caméra RealSense du bassin publie l'image couleur et ses paramètres intrinsèques
+          (distorsion, focale) — nécessaires à toute estimation de pose 3D.
+        </p>
+        <pre class="code"><span class="c"># topics ROS2</span>
+/camera/pelvis/color/image_raw
+/camera/pelvis/color/camera_info</pre>
+      </div>
+    </div>
+
+    <div class="stage">
+      <div class="stage-num">02</div>
+      <div class="stage-body">
+        <div class="stage-head">
+          <span class="stage-title">Détection du marqueur</span>
+          <span class="tag live">live</span>
+        </div>
+        <p class="stage-desc">
+          OpenCV cherche le motif ArUco dans l'image et renvoie les <b>4 coins 2D</b> du
+          marqueur en pixels — aucune information de profondeur à ce stade.
+        </p>
+        <pre class="code">detector = cv2.aruco.ArucoDetector(
+    cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50))
+corners, ids, _ = detector.detectMarkers(frame)</pre>
+      </div>
+    </div>
+
+    <div class="stage">
+      <div class="stage-num">03</div>
+      <div class="stage-body">
+        <div class="stage-head">
+          <span class="stage-title">Pose 3D du marqueur</span>
+          <span class="tag live">live</span>
+        </div>
+        <p class="stage-desc">
+          À partir des 4 coins 2D, de la taille réelle du marqueur (<b>0.20&nbsp;m</b>) et des
+          intrinsèques caméra, <code>solvePnP</code> résout la position ET l'orientation du
+          marqueur — un repère 3D complet, pas juste un point.
+        </p>
+        <pre class="code">ok, rvec, tvec = cv2.solvePnP(
+    object_points_marker, corners[i],
+    camera_matrix, dist_coeffs)
+<span class="c"># tvec, rvec : marqueur -> repere camera</span></pre>
+      </div>
+    </div>
+
+    <div class="stage">
+      <div class="stage-num">04</div>
+      <div class="stage-body">
+        <div class="stage-head">
+          <span class="stage-title">Chaîne de repères</span>
+          <span class="tag fixed">fixe</span><span class="tag live">live</span>
+        </div>
+        <p class="stage-desc">
+          Trois transformations rigides mises bout à bout. Les deux extrêmes sont mesurées
+          <b>une seule fois</b> (montage caméra, position du marqueur sur le carton) ; seule
+          l'étape du milieu change à chaque frame.
+        </p>
+
+        <div class="chain-box">
+          <div class="chain-row">
+            <span class="chain-term fixed">bassin → caméra</span>
+            <span class="chain-op">⊕</span>
+            <span class="chain-term live">caméra → marqueur</span>
+            <span class="chain-op">⊕</span>
+            <span class="chain-term fixed">marqueur → face du carton</span>
+          </div>
+          <div class="chain-eq-label">= bassin → face du carton, recalculé à chaque frame</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="stage">
+      <div class="stage-num">05</div>
+      <div class="stage-body">
+        <div class="stage-head">
+          <span class="stage-title">Sortie</span>
+          <span class="tag live">live</span>
+        </div>
+        <p class="stage-desc">
+          Le résultat : les centres des deux faces de préhension, en repère bassin — le même
+          format que <code>carton_face_centers()</code> côté simulation, mais alimenté par la
+          caméra réelle au lieu de la scène MuJoCo statique.
+        </p>
+        <div class="outputs">
+          <div class="out-cell"><div class="k">face_gauche</div><div class="v">x, y, z (m)</div></div>
+          <div class="out-cell"><div class="k">face_droite</div><div class="v">x, y, z (m)</div></div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="downstream">
+    <span class="down-arrow">↓ injecté dans chaque appel d'action</span>
+    <div class="consumers">
+      <div class="consumer"><div class="name">Lift.action</div><div class="role">approche + serrage</div></div>
+      <div class="consumer"><div class="name">Pivot.action</div><div class="role">rotation buste</div></div>
+      <div class="consumer"><div class="name">Depose.action</div><div class="role">repose podium</div></div>
+    </div>
+    <span class="down-arrow">↓</span>
+    <div class="consumer"><div class="name">solve_arm_ik(...)</div><div class="role">5 angles articulaires par bras</div></div>
+  </div>
+
+  <div class="note">
+    <b>Une seule mesure physique requise :</b> l'offset marqueur → faces du carton (position du
+    marqueur collé sur le carton, mesurée une fois au ruban). Pas de rig multi-marqueurs, pas de
+    calibration par points — tout le reste du repère bassin → carton se déduit d'une unique pose
+    ArUco par frame.
+  </div>
+
+</div>
