@@ -54,6 +54,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from lever import Lever
 from motion_state import ensure_motion_state
 from levee import (
+    APPROACH_LIFT_DURATION,
     LEFT_CHAIN, RIGHT_CHAIN, HAND_OFFSET_LEFT, HAND_OFFSET_RIGHT,
     LEFT_JOINT_INDICES, RIGHT_JOINT_INDICES, Q_LEFT_HOME, Q_RIGHT_HOME,
     WAYPOINT_Q_LEFT, WAYPOINT_Q_RIGHT, WAYPOINT_DURATION, WRIST_CHAIN_INDEX,
@@ -85,13 +86,22 @@ def run_lift_and_pivot(node, lever, args):
     wrist_rotation = np.radians(args.wrist_rotation_deg)
     walk_stance_scale = args.walk_stance_scale
 
+    # 2026-09-15 : reference "coude tendu" pour le null-space -- sans null_space_pref
+    # explicite, solve_arm_ik retombe sur q_init (WAYPOINT_Q_LEFT, coude a -110deg) comme
+    # preference par defaut (voir solve_arm_ik dans lift_carton.py) : q_pinch_L n'etait
+    # donc JAMAIS garanti d'etre un bras tendu, juste "la solution la plus proche de la
+    # posture repliee" -- constate sur le robot reel (bras qui leve bien mais ne se tend
+    # pas). ELBOW_PITCH (index 3) mis a 0 = coude aussi droit que la geometrie le permet.
+    straight_pref_L = WAYPOINT_Q_LEFT.copy()
+    straight_pref_L[3] = 0.0
     q_pinch_L = solve_arm_ik(LEFT_CHAIN, HAND_OFFSET_LEFT,
-                              _rotate_xy([PINCH_X, PINCH_Y, args.pinch_z], args.pinch_yaw_offset),
-                              WAYPOINT_Q_LEFT, lock_index=WRIST_CHAIN_INDEX, lock_angle=wrist_rotation)
+                              _rotate_xy([args.pinch_x, PINCH_Y, args.pinch_z], args.pinch_yaw_offset),
+                              WAYPOINT_Q_LEFT, lock_index=WRIST_CHAIN_INDEX, lock_angle=wrist_rotation,
+                              null_space_pref=straight_pref_L)
     q_pinch_R = mirror_left_to_right(q_pinch_L)
     # 2026-09-14 : null_space_pref=q_pinch_L -- meme fix que levee.py (cf son commentaire),
     # consolide ici depuis l'ancienne _solve_ik_locked_wrist (pas de terme null-space du tout).
-    squeeze_L = _rotate_xy([PINCH_X, SQUEEZE_Y, args.pinch_z], args.pinch_yaw_offset)
+    squeeze_L = _rotate_xy([args.pinch_x, SQUEEZE_Y, args.pinch_z], args.pinch_yaw_offset)
     q_squeeze_L = solve_arm_ik(LEFT_CHAIN, HAND_OFFSET_LEFT, squeeze_L, q_pinch_L,
                                 lock_index=WRIST_CHAIN_INDEX, lock_angle=wrist_rotation,
                                 null_space_pref=q_pinch_L)
@@ -126,20 +136,52 @@ def run_lift_and_pivot(node, lever, args):
         qL, qR = move_arms(lever, Q_LEFT_HOME, WAYPOINT_Q_LEFT, Q_RIGHT_HOME, WAYPOINT_Q_RIGHT,
                             WAYPOINT_DURATION, dry_run=args.dry_run)
 
-        _checkpoint(f"approche -- mains vers pinch, {APPROACH_DURATION:.1f}s", confirm)
         # 2026-09-11 : ramp en ESPACE CARTESIEN (pas move_arms en espace articulaire) -- la
         # main monte trop haut en route sinon (arc, pas une ligne droite), meme fix que
         # levee.py --only-phase approche, voir son commentaire pour le detail.
-        # 2026-09-14 : null_space_pref ancre sur anchor_L (pose fixe, pas warm-start) -- meme
-        # fix que levee.py.
-        pinch_target_L = _rotate_xy([PINCH_X, PINCH_Y, args.pinch_z], args.pinch_yaw_offset)
+        # 2026-09-15 : mesure numerique -- waypoint_hand_L et pinch_target_L n'ont PAS la
+        # meme hauteur (waypoint Z=0.039m, pinch Z=0.106m, ecart 6.7cm), donc la ligne
+        # "droite" precedente (waypoint -> pinch directement) montait en diagonale sur toute
+        # l'approche -- ce n'etait pas un arc/bug de solveur, une geometrie de bout en bout
+        # differente. Demande explicite utilisateur : la partie "approche" doit etre une
+        # ligne HORIZONTALE (Z constant), quitte a corriger la hauteur separement avant.
+        # Scinde donc en 2 segments :
+        #   1) ajustement vertical (meme X/Y que le point de passage, Z -> hauteur pince)
+        #   2) approche horizontale (Z constant = hauteur pince, X/Y -> cible pince)
+        pinch_target_L = _rotate_xy([args.pinch_x, PINCH_Y, args.pinch_z], args.pinch_yaw_offset)
         waypoint_hand_L = forward_kinematics(LEFT_CHAIN, HAND_OFFSET_LEFT, WAYPOINT_Q_LEFT)
+        raised_point_L = np.array([waypoint_hand_L[0], waypoint_hand_L[1], pinch_target_L[2]])
         qL, qR = WAYPOINT_Q_LEFT.copy(), WAYPOINT_Q_RIGHT.copy()
-        anchor_L = WAYPOINT_Q_LEFT.copy()
+
+        _checkpoint(f"approche -- ajustement vertical, {APPROACH_LIFT_DURATION:.1f}s", confirm)
+        n_lift = max(1, int(APPROACH_LIFT_DURATION * RATE_HZ))
+        for i in range(n_lift + 1):
+            a = ease(i / n_lift)
+            target = waypoint_hand_L + a * (raised_point_L - waypoint_hand_L)
+            # Reste ancre sur la posture repliee pendant l'ajustement vertical -- seule
+            # l'approche horizontale ci-dessous doit se tendre (demande utilisateur).
+            qL = solve_arm_ik(LEFT_CHAIN, HAND_OFFSET_LEFT, target, qL,
+                               lock_index=WRIST_CHAIN_INDEX, lock_angle=wrist_rotation, iters=30,
+                               null_space_pref=WAYPOINT_Q_LEFT)
+            qR = mirror_left_to_right(qL)
+            if args.dry_run:
+                if i in (0, n_lift):
+                    print(f"    [dry-run] t={i/RATE_HZ:.2f}s  qL={np.round(qL, 4)}  qR={np.round(qR, 4)}")
+                continue
+            _publish(lever, qL, qR)
+            time.sleep(1.0 / RATE_HZ)
+
+        _checkpoint(f"approche -- ligne horizontale vers pinch, {APPROACH_DURATION:.1f}s", confirm)
+        # Ancre GLISSANTE entre WAYPOINT_Q_LEFT et straight_pref_L (PAS q_pinch_L -- q_pinch_L
+        # n'etait lui-meme jamais garanti tendu, voir son commentaire plus haut) au meme
+        # rythme `a` que la position de la main -- repliee en debut de segment, coude aussi
+        # droit que possible en fin de segment (vise le centre de la face du carton, bras
+        # vraiment tendu). PAS ENCORE VALIDE sur le robot reel.
         n = max(1, int(APPROACH_DURATION * RATE_HZ))
         for i in range(n + 1):
             a = ease(i / n)
-            target = waypoint_hand_L + a * (pinch_target_L - waypoint_hand_L)
+            target = raised_point_L + a * (pinch_target_L - raised_point_L)
+            anchor_L = (1.0 - a) * WAYPOINT_Q_LEFT + a * straight_pref_L
             qL = solve_arm_ik(LEFT_CHAIN, HAND_OFFSET_LEFT, target, qL,
                                lock_index=WRIST_CHAIN_INDEX, lock_angle=wrist_rotation, iters=30,
                                null_space_pref=anchor_L)
@@ -170,7 +212,7 @@ def run_lift_and_pivot(node, lever, args):
             a = ease(i / n)
             z = args.pinch_z + a * (LIFT_Z - args.pinch_z)
             qL = solve_arm_ik(LEFT_CHAIN, HAND_OFFSET_LEFT,
-                               _rotate_xy([PINCH_X, SQUEEZE_Y, z], args.pinch_yaw_offset),
+                               _rotate_xy([args.pinch_x, SQUEEZE_Y, z], args.pinch_yaw_offset),
                                qL, lock_index=WRIST_CHAIN_INDEX, lock_angle=wrist_rotation,
                                iters=30, null_space_pref=q_squeeze_L)
             qR = mirror_left_to_right(qL)
@@ -243,7 +285,7 @@ def run_lift_and_pivot(node, lever, args):
             a = ease(i / n3)
             z = LIFT_Z + a * (drop_z - LIFT_Z)
             qL = solve_arm_ik(LEFT_CHAIN, HAND_OFFSET_LEFT,
-                               _rotate_xy([PINCH_X, SQUEEZE_Y, z], args.pinch_yaw_offset),
+                               _rotate_xy([args.pinch_x, SQUEEZE_Y, z], args.pinch_yaw_offset),
                                qL, lock_index=WRIST_CHAIN_INDEX, lock_angle=wrist_rotation,
                                iters=30, null_space_pref=pre_drop_anchor_L)
             qR = mirror_left_to_right(qL)
@@ -257,7 +299,7 @@ def run_lift_and_pivot(node, lever, args):
     _checkpoint(f"desserrage -- Y +-{SQUEEZE_Y} -> +-{PINCH_Y} ({args.open_duration:.1f}s) "
                 "-- LE CARTON EST RELACHE ICI, buste encore tourne", confirm)
     q_open_L = solve_arm_ik(LEFT_CHAIN, HAND_OFFSET_LEFT,
-                             _rotate_xy([PINCH_X, PINCH_Y, drop_z], args.pinch_yaw_offset),
+                             _rotate_xy([args.pinch_x, PINCH_Y, drop_z], args.pinch_yaw_offset),
                              qL, lock_index=WRIST_CHAIN_INDEX, lock_angle=wrist_rotation)
     q_open_R = mirror_left_to_right(q_open_L)
     qL, qR = move_arms(lever, qL, q_open_L, qR, q_open_R, args.open_duration, dry_run=args.dry_run)
@@ -274,7 +316,7 @@ def run_lift_and_pivot(node, lever, args):
     # --ecartement-gap-y/--retreat-back-x en observant le robot, jamais un grand saut.
     _checkpoint(f"ecartement -- Y +-{PINCH_Y} -> +-{PINCH_Y + args.ecartement_gap_y:.3f} "
                 f"({args.ecartement_duration:.1f}s)", confirm)
-    ecart_L = _rotate_xy([PINCH_X, PINCH_Y + args.ecartement_gap_y, drop_z], args.pinch_yaw_offset)
+    ecart_L = _rotate_xy([args.pinch_x, PINCH_Y + args.ecartement_gap_y, drop_z], args.pinch_yaw_offset)
     q_ecart_L = solve_arm_ik(LEFT_CHAIN, HAND_OFFSET_LEFT, ecart_L, qL,
                               lock_index=WRIST_CHAIN_INDEX, lock_angle=wrist_rotation,
                               null_space_pref=qL)
@@ -282,25 +324,24 @@ def run_lift_and_pivot(node, lever, args):
     qL, qR = move_arms(lever, qL, q_ecart_L, qR, q_ecart_R, args.ecartement_duration,
                         dry_run=args.dry_run)
 
-    # 2026-09-14 (verifie numeriquement hors robot, dry-run) : un premier essai qui ne
-    # retirait QUE X (gardant Y a la valeur ELARGIE de l'ecartement ci-dessus, meme
-    # convention que depose.py cote simu) forcait une posture bien AU-DELA meme du coude
-    # deja replie de WAYPOINT_Q (-110deg) -- jusqu'a -138deg de coude/51deg d'epaule a
-    # x=0.10. Retirer X ET Y ENSEMBLE (main ramenee vers le CENTRE du corps, pas juste
-    # rapprochee en restant ecartee sur le cote) reste beaucoup plus proche de la geometrie
-    # deja validee : a (x=0.18-0.20, y=0.10), coude ~-109 a -114deg, comparable a WAYPOINT_Q
-    # lui-meme. Defauts choisis sur cette base -- PAS ENCORE VALIDES sur le robot reel.
-    _checkpoint(f"translation arriere -- X {PINCH_X} -> {args.retreat_back_x}, "
-                f"Y +-{PINCH_Y + args.ecartement_gap_y:.3f} -> +-{args.retreat_back_y} "
-                f"({args.retreat_back_duration:.1f}s), main ramenee pres du corps", confirm)
+    # 2026-09-14 : un premier essai qui ne retirait QUE X avait ete juge trop extreme
+    # (coude au-dela de WAYPOINT_Q) -- Y avait alors ete retire EN MEME TEMPS que X, ce
+    # qui creait un large ecartement suivi d'un resserrement brusque ("comme un serrage a
+    # l'envers", retour utilisateur du 2026-09-15). 2026-09-15 : revient a la sequence
+    # EXACTE de depose.py cote simu -- X SEUL bouge, Y reste a la valeur ELARGIE de
+    # l'ecartement jusqu'au point de passage. Reverifie numeriquement a retreat_back_x=0.19
+    # (valeur actuelle, pas 0.10 comme le vieux test qui donnait -138deg) : coude a
+    # -101deg, proche de WAYPOINT_Q (-110deg), pas de posture extreme.
+    _checkpoint(f"translation arriere -- X {args.pinch_x} -> {args.retreat_back_x} "
+                f"({args.retreat_back_duration:.1f}s), Y reste large, main ramenee pres du corps",
+                confirm)
     n4 = max(1, int(args.retreat_back_duration * RATE_HZ))
     q_retreat_start_L = qL.copy()
     for i in range(n4 + 1):
         a = ease(i / n4)
         x = ecart_L[0] + a * (args.retreat_back_x - ecart_L[0])
-        y = ecart_L[1] + a * (args.retreat_back_y - ecart_L[1])
         qL = solve_arm_ik(LEFT_CHAIN, HAND_OFFSET_LEFT,
-                           np.array([x, y, ecart_L[2]]), qL,
+                           np.array([x, ecart_L[1], ecart_L[2]]), qL,
                            lock_index=WRIST_CHAIN_INDEX, lock_angle=wrist_rotation, iters=30,
                            null_space_pref=q_retreat_start_L)
         qR = mirror_left_to_right(qL)
@@ -311,12 +352,17 @@ def run_lift_and_pivot(node, lever, args):
         _publish(lever, qL, qR)
         time.sleep(1.0 / RATE_HZ)
 
+    # 2026-09-15 : etape manquante par rapport a depose.py cote simu -- reajoutee (point de
+    # passage coudes-vers-l'arriere entre la translation arriere et Q_HOME, "meme sequence").
+    _checkpoint(f"degagement -- coudes vers l'arriere ({args.degagement_waypoint_duration:.1f}s)",
+                confirm)
+    qL, qR = move_arms(lever, qL, WAYPOINT_Q_LEFT, qR, WAYPOINT_Q_RIGHT,
+                        args.degagement_waypoint_duration, dry_run=args.dry_run)
+
     # 2026-09-10, sur demande utilisateur (les bras tendus retraversaient l'espace ou
     # le carton vient d'etre pose pendant le depivot, choc constate) : retour des bras
     # a Q_HOME (le long du corps) AVANT le depivot, pas apres -- le buste tourne
-    # ensuite avec les bras deja replies, plus rien a heurter. 2026-09-14 : la main part
-    # maintenant deja pres du corps (ecartement+translation arriere ci-dessus) -- ce saut
-    # en espace articulaire est donc beaucoup plus court/sur qu'avant.
+    # ensuite avec les bras deja replies, plus rien a heurter.
     _checkpoint(f"retour bras le long du corps ({args.retreat_duration:.1f}s), "
                 "avant le depivot", confirm)
     qL, qR = move_arms(lever, qL, Q_LEFT_HOME, qR, Q_RIGHT_HOME, args.retreat_duration,
@@ -354,11 +400,16 @@ def run_lift_and_pivot(node, lever, args):
 
 def _build_arg_parser():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--pinch-z", type=float, default=0.106,
+    parser.add_argument("--pinch-x", type=float, default=PINCH_X,
+                         help="2026-09-15 : expose PINCH_X (distance de portee, defaut "
+                              f"{PINCH_X}m calibre pour 14.6cm du bord du podium) en CLI pour "
+                              "tester une portee differente sans modifier la constante calibree.")
+    parser.add_argument("--pinch-z", type=float, default=0.05,
                          help="2026-09-10 : defaut corrige de -0.139 (perime, geometrie "
-                              "d'avant le podium remesure a 0.8m) vers 0.106 -- meme valeur "
-                              "que le defaut actuel de levee.py/orchestrateur.py. -0.139 "
-                              "viserait sous le carton reel actuel.")
+                              "d'avant le podium remesure a 0.8m) vers 0.106, cense matcher "
+                              "levee.py -- MAIS n'a jamais suivi le changement ulterieur de "
+                              "levee.py vers 0.05 (desync trouvee + confirmee sur le robot "
+                              "reel le 2026-09-15 : 0.106 levait trop haut, 0.05 correct).")
     parser.add_argument("--pinch-yaw-offset", type=float, default=0.0)
     parser.add_argument("--wrist-rotation-deg", type=float, default=ELBOW_YAW_ROTATION_DEG)
     parser.add_argument("--walk-stance-scale", type=float, default=WALK_STANCE_SCALE)
@@ -383,30 +434,27 @@ def _build_arg_parser():
     parser.add_argument("--open-duration", type=float, default=2.0,
                          help="Desserrage (SQUEEZE_Y -> PINCH_Y) -- LE CARTON EST RELACHE ICI. "
                               "2026-09-10 : etait 3.0.")
-    parser.add_argument("--ecartement-gap-y", type=float, default=0.05,
+    parser.add_argument("--ecartement-gap-y", type=float, default=0.025,
                          help="2026-09-14, port depuis depose.py (simu) : ecart Y supplementaire "
                               "des mains apres le desserrage, avant le retour bras home -- evite "
                               "de sauter directement (espace articulaire) depuis une pose encore "
-                              "proche du carton. PAS ENCORE VALIDE sur le robot reel -- valeur de "
-                              "depart modeste, ajuster progressivement en observant le robot.")
+                              "proche du carton. 2026-09-15 : reduit de 0.05 a 0.025 (retour "
+                              "utilisateur -- 0.05 ecartait trop les mains apres relachement).")
     parser.add_argument("--ecartement-duration", type=float, default=2.0,
                          help="2026-09-14 -- defaut volontairement LENT (pas 1.0s comme la simu, "
                               "mouvement jamais teste sur le materiel).")
     parser.add_argument("--retreat-back-x", type=float, default=0.19,
                          help="2026-09-14, port depuis depose.py (simu) : translation X vers "
                               "l'arriere (main ramenee plus pres du corps) juste avant le retour "
-                              "en Q_HOME. Verifie numeriquement (dry-run) avec --retreat-back-y : "
-                              "coude reste proche de la geometrie deja validee (WAYPOINT_Q, "
-                              "-110deg) a cette valeur. PAS ENCORE VALIDE sur le robot reel.")
-    parser.add_argument("--retreat-back-y", type=float, default=0.10,
-                         help="2026-09-14 : Y retire EN MEME TEMPS que X (pas juste rapproche en "
-                              "restant ecarte sur le cote) -- essentiel, cf commentaire dans "
-                              "run_lift_and_pivot : X seul (Y garde a la valeur ELARGIE de "
-                              "l'ecartement) forcait une posture de coude bien au-dela meme du "
-                              "deja-extreme WAYPOINT_Q (-138deg vs -110deg). PAS ENCORE VALIDE "
-                              "sur le robot reel.")
+                              "en Q_HOME. 2026-09-15 : verifie numeriquement que Y RESTE LARGE "
+                              "(voir plus bas) a cette valeur -- coude a -101deg, proche de "
+                              "WAYPOINT_Q (-110deg), pas de posture extreme.")
     parser.add_argument("--retreat-back-duration", type=float, default=2.0,
                          help="2026-09-14 -- defaut volontairement LENT (pas 1.0s comme la simu).")
+    parser.add_argument("--degagement-waypoint-duration", type=float, default=2.0,
+                         help="2026-09-15 : etape manquante par rapport a depose.py (simu) -- "
+                              "reajoutee ici. Point de passage entre la translation arriere et "
+                              "Q_HOME (meme valeur que g.degagement_waypoint_duration en simu).")
     parser.add_argument("--retreat-duration", type=float, default=2.0,
                          help="Retour des bras a Q_HOME apres le desserrage. "
                               "2026-09-10 : etait 3.0.")

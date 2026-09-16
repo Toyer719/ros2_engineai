@@ -170,13 +170,21 @@ LIFT_Z = 0.15                 # 2026-09-09, CORRECTION D'URGENCE : 0.391 (qui ga
                               # ~4.6deg de marge sur l'epaule (la plus juste). Levee reelle
                               # desormais modeste (~4-5cm au-dessus du point de prise), pas
                               # 28.5cm comme avant -- la geometrie ne permet plus plus.
-APPROACH_DURATION = 3.5      # 2026-09-10 : etait 5.0 -- premiere sequence complete
-                              # (levee_pivot.py, pivot+depose carton en main) validee sans
-                              # incident sur le robot reel a 5.0/5.0/6.0, jugee "tres lente"
-                              # -- accelere modere (~30-40%), PAS retour a 4.0 (deja juge
-                              # trop rapide le 09/09, cf commentaire d'origine ci-dessous).
+APPROACH_DURATION = 4.0      # 2026-09-10 : etait 5.0 puis 3.5 -- validait alors TOUTE
+                              # l'approche (vertical+horizontal en un seul mouvement diagonal).
+                              # 2026-09-15 : ne couvre plus que le segment HORIZONTAL depuis le
+                              # scindage vertical/horizontal (voir run_lift_sequence). Passe a
+                              # 2.0s (demande "plus vite") COMBINE a --pinch-x 0.30 (demande
+                              # "plus loin") -> vitesse de la main 1.3cm/s (validee) -> 6.4cm/s
+                              # (x5), constate "tremble a mort" sur le robot reel -- remonte a
+                              # 4.0s pour ramener la vitesse a ~3.2cm/s (encore ~2.5x plus
+                              # rapide qu'avant, mais loin du x5 qui fait trembler). PAS ENCORE
+                              # VALIDE sur le robot reel a cette vitesse -- reajuster encore
+                              # (plus haut ou plus bas) selon observation.
 WAYPOINT_DURATION = 3.5      # point de passage coudes-vers-l'arriere avant l'approche, meme
                               # rythme que APPROACH_DURATION.
+APPROACH_LIFT_DURATION = 1.0  # 2026-09-15 : ajustement vertical avant la ligne horizontale
+                              # de l'approche -- voir commentaire dans run_lift_sequence.
 SQUEEZE_DURATION = 3.5       # 2026-09-10 : etait 5.0, meme reduction moderee.
 LIFT_DURATION = 4.0          # 2026-09-10 : etait 6.0, meme reduction moderee.
 # 2026-09-09 (historique) : ces 3 valeurs etaient a 4.0/4.0/5.0, ralenties suite a un
@@ -328,6 +336,10 @@ def move_arms(lever, qL0, qL1, qR0, qR1, duration, dry_run=False):
 
 def _build_arg_parser():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--pinch-x", type=float, default=PINCH_X,
+                         help="2026-09-15 : expose PINCH_X (distance de portee, defaut "
+                              f"{PINCH_X}m calibre pour 14.6cm du bord du podium) en CLI pour "
+                              "tester une portee differente sans modifier la constante calibree.")
     parser.add_argument("--pinch-z", type=float, default=0.05,
                          help="2026-09-09 : podium reel remesure a 0.8m de haut (etait 0.535m) "
                               "-- calcul d'origine : carton a 0.8+0.146=0.946m (monde), bassin "
@@ -387,9 +399,19 @@ def run_lift_sequence(node, lever, args):
     # hand_offset redevient HAND_OFFSET_LEFT/RIGHT tel quel (pas tourne a la main) :
     # forward_kinematics applique deja la rotation du dernier joint au offset, inutile de la
     # precalculer.
+    # 2026-09-15 : reference "coude tendu" pour le null-space -- sans null_space_pref
+    # explicite, solve_arm_ik retombe sur q_init (ici Q_LEFT_HOME) comme preference par
+    # defaut (voir solve_arm_ik dans lift_carton.py) : q_pinch_L n'etait donc jamais
+    # garanti d'etre un bras tendu -- constate sur le robot reel (bras qui leve bien mais
+    # ne se tend pas). ELBOW_PITCH (index 3) mis a 0 = coude aussi droit que la geometrie
+    # le permet, base sur WAYPOINT_Q_LEFT (pas Q_LEFT_HOME) pour rester coherent avec la
+    # meme reference que la rampe d'approche ci-dessous.
+    straight_pref_L = WAYPOINT_Q_LEFT.copy()
+    straight_pref_L[3] = 0.0
     q_pinch_L = solve_arm_ik(LEFT_CHAIN, HAND_OFFSET_LEFT,
-                              _rotate_xy([PINCH_X, PINCH_Y, args.pinch_z], args.pinch_yaw_offset),
-                              Q_LEFT_HOME, lock_index=WRIST_CHAIN_INDEX, lock_angle=wrist_rotation)
+                              _rotate_xy([args.pinch_x, PINCH_Y, args.pinch_z], args.pinch_yaw_offset),
+                              Q_LEFT_HOME, lock_index=WRIST_CHAIN_INDEX, lock_angle=wrist_rotation,
+                              null_space_pref=straight_pref_L)
     q_pinch_R = mirror_left_to_right(q_pinch_L)
     print(f"[DEBUG] poignet -- qL[-1]={np.degrees(q_pinch_L[-1]):.1f}deg "
           f"qR[-1]={np.degrees(q_pinch_R[-1]):.1f}deg (limite mecanique : +-150deg)")
@@ -399,7 +421,7 @@ def run_lift_sequence(node, lever, args):
     # de q_pinch_L pour ce petit deplacement Y (serrage), meme classe de bug/fix que celui
     # trouve cote simu le meme jour (lift.py, squeeze-phase). PAS ENCORE VALIDE sur le robot
     # reel.
-    squeeze_L = _rotate_xy([PINCH_X, SQUEEZE_Y, args.pinch_z], args.pinch_yaw_offset)
+    squeeze_L = _rotate_xy([args.pinch_x, SQUEEZE_Y, args.pinch_z], args.pinch_yaw_offset)
     q_squeeze_L = solve_arm_ik(LEFT_CHAIN, HAND_OFFSET_LEFT, squeeze_L, q_pinch_L,
                                 lock_index=WRIST_CHAIN_INDEX, lock_angle=wrist_rotation,
                                 null_space_pref=q_pinch_L)
@@ -424,30 +446,58 @@ def run_lift_sequence(node, lever, args):
         qL, qR = move_arms(lever, Q_LEFT_HOME, WAYPOINT_Q_LEFT, Q_RIGHT_HOME, WAYPOINT_Q_RIGHT,
                             WAYPOINT_DURATION, dry_run=args.dry_run)
 
-        _checkpoint(
-            f"approche -- mains vers pinch (x={PINCH_X} y=+-{PINCH_Y} z={args.pinch_z}, "
-            f"poignet pivote de {np.degrees(wrist_rotation):.0f}deg), {APPROACH_DURATION}s",
-            confirm,
-        )
         # 2026-09-11 : move_arms() interpole en ESPACE ARTICULAIRE (angles lineaires) entre
         # le point de passage et pinch -- constate sur le robot reel que la main monte trop
         # haut en cours de route (arc, pas une ligne droite) meme si les 2 postures aux
         # extremites sont correctes, a cause de la non-linearite de la geometrie du bras.
-        # Fix : ramp en ESPACE CARTESIEN comme la levee ci-dessous -- interpole la position
-        # 3D de la main en ligne droite du point de passage vers pinch, IK resolue a chaque
-        # pas (poignet toujours fige a wrist_rotation). 2026-09-14 : null_space_pref ancre sur
-        # anchor_L (pose FIXE, capturee une fois avant la boucle) au lieu d'un warm-start sur
-        # qL qui derive a chaque pas -- meme fix que cote simu (depose.py/pivot.py : ancrage
-        # fixe, pas glissant, pour eviter la derive cumulative du DDL redondant sur toute la
-        # rampe). PAS ENCORE VALIDE sur le robot reel.
-        pinch_target_L = _rotate_xy([PINCH_X, PINCH_Y, args.pinch_z], args.pinch_yaw_offset)
+        # Fix : ramp en ESPACE CARTESIEN comme la levee ci-dessous.
+        # 2026-09-15 : mesure numerique -- waypoint_hand_L et pinch_target_L n'ont PAS la
+        # meme hauteur (waypoint Z=0.039m, pinch Z=0.106m, ecart 6.7cm), donc la ligne
+        # "droite" precedente (waypoint -> pinch directement) montait en diagonale sur toute
+        # l'approche -- pas un bug de solveur, une geometrie de bout en bout differente.
+        # Demande explicite utilisateur : l'approche doit etre une ligne HORIZONTALE (Z
+        # constant), quitte a corriger la hauteur separement avant. Scinde en 2 segments :
+        #   1) ajustement vertical (meme X/Y que le point de passage, Z -> hauteur pince)
+        #   2) approche horizontale (Z constant = hauteur pince, X/Y -> cible pince)
+        pinch_target_L = _rotate_xy([args.pinch_x, PINCH_Y, args.pinch_z], args.pinch_yaw_offset)
         waypoint_hand_L = forward_kinematics(LEFT_CHAIN, HAND_OFFSET_LEFT, WAYPOINT_Q_LEFT)
+        raised_point_L = np.array([waypoint_hand_L[0], waypoint_hand_L[1], pinch_target_L[2]])
         qL, qR = WAYPOINT_Q_LEFT.copy(), WAYPOINT_Q_RIGHT.copy()
-        anchor_L = WAYPOINT_Q_LEFT.copy()
+
+        _checkpoint(f"approche -- ajustement vertical, {APPROACH_LIFT_DURATION}s", confirm)
+        n_lift = max(1, int(APPROACH_LIFT_DURATION * RATE_HZ))
+        for i in range(n_lift + 1):
+            a = ease(i / n_lift)
+            target = waypoint_hand_L + a * (raised_point_L - waypoint_hand_L)
+            # Reste ancre sur la posture repliee pendant l'ajustement vertical -- seule
+            # l'approche horizontale ci-dessous doit se tendre (demande utilisateur).
+            qL = solve_arm_ik(LEFT_CHAIN, HAND_OFFSET_LEFT, target, qL,
+                               lock_index=WRIST_CHAIN_INDEX, lock_angle=wrist_rotation, iters=30,
+                               null_space_pref=WAYPOINT_Q_LEFT)
+            qR = mirror_left_to_right(qL)
+            if args.dry_run:
+                if i in (0, n_lift):
+                    print(f"    [dry-run] t={i/RATE_HZ:.2f}s  qL={np.round(qL, 4)}  qR={np.round(qR, 4)}")
+                continue
+            _publish(lever, qL, qR)
+            time.sleep(1.0 / RATE_HZ)
+
+        _checkpoint(
+            f"approche -- ligne horizontale vers pinch (x={args.pinch_x} y=+-{PINCH_Y} "
+            f"z={args.pinch_z}, poignet pivote de {np.degrees(wrist_rotation):.0f}deg), "
+            f"{APPROACH_DURATION}s",
+            confirm,
+        )
+        # Ancre GLISSANTE entre WAYPOINT_Q_LEFT et straight_pref_L (PAS q_pinch_L -- q_pinch_L
+        # n'etait lui-meme jamais garanti tendu, voir son commentaire plus haut) au meme
+        # rythme `a` que la position de la main -- repliee en debut de segment, coude aussi
+        # droit que possible en fin de segment (vise le centre de la face du carton, bras
+        # vraiment tendu). PAS ENCORE VALIDE sur le robot reel.
         n = max(1, int(APPROACH_DURATION * RATE_HZ))
         for i in range(n + 1):
             a = ease(i / n)
-            target = waypoint_hand_L + a * (pinch_target_L - waypoint_hand_L)
+            target = raised_point_L + a * (pinch_target_L - raised_point_L)
+            anchor_L = (1.0 - a) * WAYPOINT_Q_LEFT + a * straight_pref_L
             qL = solve_arm_ik(LEFT_CHAIN, HAND_OFFSET_LEFT, target, qL,
                                lock_index=WRIST_CHAIN_INDEX, lock_angle=wrist_rotation, iters=30,
                                null_space_pref=anchor_L)
@@ -487,7 +537,7 @@ def run_lift_sequence(node, lever, args):
             a = ease(i / n)
             z = args.pinch_z + a * (LIFT_Z - args.pinch_z)
             qL_prev = solve_arm_ik(LEFT_CHAIN, HAND_OFFSET_LEFT,
-                                    _rotate_xy([PINCH_X, SQUEEZE_Y, z], args.pinch_yaw_offset),
+                                    _rotate_xy([args.pinch_x, SQUEEZE_Y, z], args.pinch_yaw_offset),
                                     qL_prev, lock_index=WRIST_CHAIN_INDEX, lock_angle=wrist_rotation,
                                     iters=30, null_space_pref=q_squeeze_L)
             qR_prev = mirror_left_to_right(qL_prev)
