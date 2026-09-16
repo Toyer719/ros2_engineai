@@ -71,6 +71,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 from lift_carton import mirror_left_to_right
 
 
+def _publish_with_waist(lever, qL, qR, waist):
+    lever.set_batch(LEFT_JOINT_INDICES + RIGHT_JOINT_INDICES + [WAIST_JOINT_INDEX],
+                     list(qL) + list(qR) + [waist])
+
+
 # 2026-09-14 : run_depose_phase() (code MORT depuis toujours -- confirme par grep, zero
 # appelant dans ce depot) supprimee ici. Elle divergeait deja de la depose REELLEMENT
 # executee (bloc en ligne dans run_lift_and_pivot ci-dessous : gere le buste/
@@ -246,15 +251,13 @@ def run_lift_and_pivot(node, lever, args):
             if i in (0, n):
                 print(f"    [dry-run] t={i / RATE_HZ:.2f}s  waist={np.degrees(waist):.1f}deg")
             continue
-        _publish(lever, qL, qR)
-        lever[WAIST_JOINT_INDEX] = float(waist)
+        _publish_with_waist(lever, qL, qR, waist)
         time.sleep(1.0 / RATE_HZ)
 
     _checkpoint(f"maintien pivote -- {args.hold_seconds:.1f}s", confirm)
     if not args.dry_run:
         for _ in range(max(1, int(args.hold_seconds * RATE_HZ))):
-            _publish(lever, qL, qR)
-            lever[WAIST_JOINT_INDEX] = float(angle_target)
+            _publish_with_waist(lever, qL, qR, angle_target)
             time.sleep(1.0 / RATE_HZ)
 
     if not run_depose:
@@ -390,8 +393,7 @@ def run_lift_and_pivot(node, lever, args):
         n2 = max(1, int(args.release_ramp_seconds * RATE_HZ))
         for i in range(n2 + 1):
             lever.set_weight(1.0 - i / n2)
-            _publish(lever, qL, qR)
-            lever[WAIST_JOINT_INDEX] = 0.0
+            _publish_with_waist(lever, qL, qR, 0.0)
             time.sleep(1.0 / RATE_HZ)
         lever.release()
 

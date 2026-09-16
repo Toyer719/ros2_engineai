@@ -102,6 +102,12 @@ class Lever:
         self._touched[joint_index] = True
         self._publish()
 
+    def set_batch(self, indices, angles):
+        for idx, angle in zip(indices, angles):
+            self._position[idx] = float(angle)
+            self._touched[idx] = True
+        self._publish()
+
     def __getitem__(self, joint_index):
         return self._position[joint_index]
 

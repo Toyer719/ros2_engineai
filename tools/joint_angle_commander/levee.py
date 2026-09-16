@@ -312,10 +312,7 @@ def _straighten_knees(lever, scale, stiffness_scale, duration, rate_hz=RATE_HZ, 
 
 
 def _publish(lever, qL, qR):
-    for idx, angle in zip(LEFT_JOINT_INDICES, qL):
-        lever[idx] = float(angle)
-    for idx, angle in zip(RIGHT_JOINT_INDICES, qR):
-        lever[idx] = float(angle)
+    lever.set_batch(LEFT_JOINT_INDICES + RIGHT_JOINT_INDICES, list(qL) + list(qR))
 
 
 def move_arms(lever, qL0, qL1, qR0, qR1, duration, dry_run=False):
