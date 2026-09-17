@@ -33,14 +33,9 @@ position de main).
 
 ## Démonstration
 
-| Simulation (MuJoCo) | Robot réel |
-|---|---|
-| [▶ Voir la vidéo](https://raw.githubusercontent.com/Toyer719/ros2_engineai/main/docs/videos/demo-simu.mp4) | [▶ Voir la vidéo](https://raw.githubusercontent.com/Toyer719/ros2_engineai/main/docs/videos/demo-reel.mp4) |
+https://github.com/user-attachments/assets/b2cbb9ed-864f-400c-91af-6d2eb987d223
 
-*(lien direct vers le fichier brut -- la page de prévisualisation
-GitHub refuse d'afficher les fichiers binaires au-delà d'une certaine
-taille, mais le fichier lui-même est intact et se lit normalement via
-ce lien)*
+https://github.com/user-attachments/assets/f4f9cb6e-eddb-4ac3-b14e-eedf39d95371
 
 ## Architecture
 
