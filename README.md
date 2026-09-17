@@ -102,6 +102,12 @@ Une seule instance `Lever`, une seule fonction qui enchaîne les étapes --
 la posture des bras (`qL`/`qR`) circule directement de fonction en
 fonction en mémoire, sans jamais être recalculée depuis zéro.
 
+### Pour aller plus loin
+
+- [`docs/CODE_ROBOT_REEL.md`](docs/CODE_ROBOT_REEL.md) -- explication
+  bloc par bloc de tout le code du robot réel (cinématique inverse,
+  communication ROS2, machine à états, séquence complète).
+
 ## Librairies et prérequis
 
 - **ROS2 Humble** (`rclpy`, `rmw_cyclonedds_cpp`)
