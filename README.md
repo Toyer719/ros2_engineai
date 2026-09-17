@@ -87,10 +87,13 @@ malgré cette séparation en process distincts.
 
 ```mermaid
 flowchart LR
-    script["levee_pivot.py<br/>(un seul node ROS2)"]
+    subgraph script["levee_pivot.py (un seul node ROS2)"]
+        direction LR
+        approche["approche()"] --> serrage["serrage()"] --> levee["levee()"]
+        levee --> pivot["pivot()"] --> depose["depose()"] --> release["release()"]
+    end
     exec["src_executor<br/>(sur le robot)"]
 
-    script -->|"approche() -> serrage() -> levee()<br/>-> pivot() -> depose() -> release()"| script
     script -->|"/motion/joint_override_command"| exec
     script -->|"/motion/set_motion_state"| exec
 ```
