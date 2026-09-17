@@ -107,6 +107,9 @@ fonction en mémoire, sans jamais être recalculée depuis zéro.
 - [`docs/CODE_ROBOT_REEL.md`](docs/CODE_ROBOT_REEL.md) -- explication
   bloc par bloc de tout le code du robot réel (cinématique inverse,
   communication ROS2, machine à états, séquence complète).
+- [`docs/CODE_SIMULATION.md`](docs/CODE_SIMULATION.md) -- explication
+  bloc par bloc de tout le code de la simulation (`chef_node.py` et les
+  5 Action Servers qu'il orchestre).
 
 ## Librairies et prérequis
 
