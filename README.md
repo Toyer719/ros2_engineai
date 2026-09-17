@@ -148,9 +148,81 @@ cd package_sequence_bras_reel
 python3 levee_pivot.py --angle-deg 90
 ```
 
-Confirmation manuelle entre chaque étape par défaut (Entrée pour continuer,
-Ctrl+C pour arrêter) -- ajouter `--no-confirm` pour enchaîner sans pause,
-`--dry-run` pour vérifier la trajectoire sans rien publier au robot.
+Par défaut, chaque étape s'arrête et attend une touche Entrée avant de
+continuer (sécurité pour vérifier visuellement le robot) -- utile la
+première fois, à désactiver une fois la séquence validée :
+
+```bash
+python3 levee_pivot.py --angle-deg 90 --no-confirm --skip-motion-state
+```
+
+`--skip-motion-state` saute la vérification/bascule automatique en
+`lower_body_balance` -- à utiliser seulement si le robot y est déjà
+(sinon publier des positions n'a aucun effet visible, voir la section
+`motion_state.py` de [`docs/CODE_ROBOT_REEL.md`](docs/CODE_ROBOT_REEL.md)).
+
+#### Toutes les options
+
+| Option | Défaut | Effet |
+|---|---|---|
+| `--angle-deg` | `20.0` | Angle de rotation du buste (degrés) |
+| `--pinch-x` | `0.216` | Distance de visée du carton (mètres, axe X) |
+| `--pinch-z` | `0.05` | Hauteur de visée du carton (mètres, repère bassin) |
+| `--pinch-yaw-offset` | `0.0` | Correction de cap si le robot ne s'arrête pas pile en face du carton (radians) |
+| `--wrist-rotation-deg` | `0.0` | Rotation du poignet verrouillée pendant toute la prise (degrés) |
+| `--walk-stance-scale` | `0.0` | Flexion des genoux avant la prise (`0` = jambes droites, `1` = flexion complète) |
+| `--pivot-duration` | `2.5` | Durée de la rotation du buste (secondes) -- aussi utilisée pour le dépivot |
+| `--hold-seconds` | `0.9` | Temps de maintien une fois le buste pivoté |
+| `--retract-x` | `0.19` | Position X du carton "rapproché du corps" pendant le pivot |
+| `--depose-x` | `0.40` | Position X du carton "tendu" pour la dépose |
+| `--retract-duration` | `0.6` | Durée du rapproché, fusionnée avec le DÉBUT du pivot |
+| `--extend-duration` | `0.6` | Durée de l'extension, fusionnée avec la FIN du pivot (`retract_duration + extend_duration` doit rester `<= pivot_duration`) |
+| `--release-ramp-seconds` | `0.9` | Durée de la rampe de relâchement final (poids 1.0 → 0.0) |
+| `--pre-release-drop` | `0.03` | Petite baisse du carton avant relâchement (mètres) |
+| `--pre-release-drop-duration` | `0.9` | Durée de cette baisse |
+| `--open-duration` | `1.3` | Durée de l'ouverture de la prise (désserrage) |
+| `--ecartement-gap-y` | `0.025` | Écartement supplémentaire des mains avant de les retirer (mètres) |
+| `--ecartement-duration` | `1.3` | Durée de cet écartement |
+| `--retreat-back-x` | `0.19` | Position X où ramener la main avant de la replier |
+| `--retreat-back-duration` | `1.3` | Durée de cette translation arrière |
+| `--degagement-waypoint-duration` | `1.3` | Durée du retour au point de passage "coudes vers l'arrière" |
+| `--retreat-duration` | `1.0` | Durée du retour des bras le long du corps (après le dépivot) |
+| `--only-phase` | *(aucune)* | Rejoue UNE SEULE étape : `approche`, `serrage`, `levee` ou `pivot` (voir ci-dessous) |
+| `--skip-motion-state` | *(désactivé)* | Ne vérifie/force pas l'état `lower_body_balance` avant de commencer |
+| `--dry-run` | *(désactivé)* | Calcule et affiche la trajectoire sans rien publier au robot ni se connecter à ROS2 |
+| `--no-confirm` | *(désactivé)* | N'attend pas de touche Entrée entre les étapes |
+
+#### Rejouer une seule étape avec `--only-phase`
+
+Utile pour calibrer/déboguer une étape sans refaire toute la séquence à
+chaque fois -- chaque appel garde les bras tenus là où l'appel précédent
+les a laissés (nécessite le même process/`Lever`, donc ne PAS relancer le
+script entre deux appels `--only-phase` si l'objectif est d'enchaîner) :
+
+```bash
+# 1) approche seule -- vérifie la visée avant de toucher le carton
+python3 levee_pivot.py --only-phase approche --no-confirm
+
+# 2) serrage seul -- une fois l'approche validée
+python3 levee_pivot.py --only-phase serrage --no-confirm
+
+# 3) levée seule
+python3 levee_pivot.py --only-phase levee --no-confirm
+
+# 4) pivot + depose -- termine la sequence
+python3 levee_pivot.py --only-phase pivot --angle-deg 90 --no-confirm
+```
+
+#### Vérifier une trajectoire sans toucher au robot
+
+```bash
+python3 levee_pivot.py --angle-deg 90 --dry-run
+```
+
+`--dry-run` calcule toute la séquence (IK compris) et affiche les valeurs
+clés à chaque étape, sans jamais se connecter à ROS2 ni publier quoi que
+ce soit -- le moyen le plus sûr de tester un nouveau réglage avant de le
+lancer pour de vrai.
 
 ## Structure du dépôt
 
