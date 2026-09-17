@@ -33,22 +33,12 @@ position de main).
 
 ## Démonstration
 
-<!--
-  A remplir : glisser-déposer les vidéos directement dans la zone de texte
-  d'une issue ou PR GitHub pour obtenir une URL du type
-  https://github.com/<user>/<repo>/assets/<id>/xxxx.mp4, puis l'utiliser
-  ici avec une balise <video> (GitHub sait la lire nativement dans un
-  README) :
-
-  <video src="https://github.com/<user>/<repo>/assets/.../demo-simu.mp4" controls width="600"></video>
-
-  Alternative simple : convertir en GIF et l'inclure comme une image
-  classique (![demo](docs/videos/demo-simu.gif)).
--->
-
 | Simulation (MuJoCo) | Robot réel |
 |---|---|
-| *(vidéo à venir)* | *(vidéo à venir)* |
+| [▶ Voir la vidéo](docs/videos/demo-simu.mp4) | [▶ Voir la vidéo](docs/videos/demo-reel.mp4) |
+
+*(le lien ouvre le lecteur vidéo natif de GitHub -- clic droit + "ouvrir
+dans un nouvel onglet" si le rendu inline ne se déclenche pas)*
 
 ## Architecture
 
