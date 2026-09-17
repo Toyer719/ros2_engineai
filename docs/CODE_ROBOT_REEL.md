@@ -12,9 +12,74 @@ communique avec le robot), voir le [README principal](../README.md). Pour
 un tableau croisé "quelle capacité, quelle fonction", voir l'artefact
 personnel dédié (catalogue des fonctions de mouvement).
 
+## Sommaire
+
+- **[📄 1. `lift_carton.py` (104 lignes) -- la géométrie et la cinématique inverse](#1-lift_cartonpy-104-lignes----la-géométrie-et-la-cinématique-inverse)**
+  - [Les chaînes cinématiques (lignes 3-19)](#les-chaînes-cinématiques-lignes-3-19)
+  - [`rotation_matrix` (lignes 22-25)](#rotation_matrix-lignes-22-25)
+  - [`forward_kinematics` (lignes 28-34) -- "si je connais les 5 angles, où est la main ?"](#forward_kinematics-lignes-28-34----si-je-connais-les-5-angles-où-est-la-main)
+  - [`numerical_jacobian` (lignes 37-44) -- "si je bouge un peu chaque angle, comment bouge la main ?"](#numerical_jacobian-lignes-37-44----si-je-bouge-un-peu-chaque-angle-comment-bouge-la-main)
+  - [`solve_ik` (lignes 47-56) -- cinématique inverse SANS verrou, 5 degrés de liberté libres](#solve_ik-lignes-47-56----cinématique-inverse-sans-verrou-5-degrés-de-liberté-libres)
+  - [`solve_arm_ik` (lignes 59-90) -- la vraie fonction utilisée partout, avec verrou + préférence](#solve_arm_ik-lignes-59-90----la-vraie-fonction-utilisée-partout-avec-verrou-préférence)
+  - [`mirror_left_to_right` (lignes 93-98)](#mirror_left_to_right-lignes-93-98)
+  - [`ease` (lignes 101-103)](#ease-lignes-101-103)
+- **[📄 2. `lever.py` (116 lignes) -- la classe qui parle au robot](#2-leverpy-116-lignes----la-classe-qui-parle-au-robot)**
+  - [Constantes (lignes 8-12)](#constantes-lignes-8-12)
+  - [`__init__` (lignes 17-31)](#__init__-lignes-17-31)
+  - [`set_weight` (lignes 33-36)](#set_weight-lignes-33-36)
+  - [`set_gains` (lignes 38-44)](#set_gains-lignes-38-44)
+  - [`_wait_for_subscriber` (lignes 46-51)](#_wait_for_subscriber-lignes-46-51)
+  - [`__setitem__`/`set_batch` (lignes 53-62) -- le cœur de la classe](#__setitem__set_batch-lignes-53-62----le-cœur-de-la-classe)
+  - [`__getitem__` (lignes 64-65)](#__getitem__-lignes-64-65)
+  - [`release`/`forget`/`untouch` (lignes 67-81)](#releaseforgetuntouch-lignes-67-81)
+  - [`_publish` (lignes 83-95) -- ce qui part réellement sur le réseau](#_publish-lignes-83-95----ce-qui-part-réellement-sur-le-réseau)
+  - [`main` (lignes 98-115) -- démo minimale, exécutable seule](#main-lignes-98-115----démo-minimale-exécutable-seule)
+- **[📄 3. `motion_state.py` (69 lignes) -- le verrou de sécurité](#3-motion_statepy-69-lignes----le-verrou-de-sécurité)**
+  - [Setup des topics (lignes 4-20)](#setup-des-topics-lignes-4-20)
+  - [`_wait_for_state`/`_switch_to` (lignes 22-43)](#_wait_for_state_switch_to-lignes-22-43)
+  - [Le corps de la fonction : détour automatique (lignes 45-68)](#le-corps-de-la-fonction-détour-automatique-lignes-45-68)
+- **[📄 4. `levee.py` (298 lignes) -- bibliothèque de mouvement + script "lever seul"](#4-leveepy-298-lignes----bibliothèque-de-mouvement-script-lever-seul)**
+  - [Constantes géométriques et de timing (lignes 20-65)](#constantes-géométriques-et-de-timing-lignes-20-65)
+  - [`_checkpoint` (lignes 68-71)](#_checkpoint-lignes-68-71)
+  - [`_rotate_xy` (lignes 74-77)](#_rotate_xy-lignes-74-77)
+  - [`_quintic_ease` (lignes 80-82)](#_quintic_ease-lignes-80-82)
+  - [`_bend_knees` (lignes 85-104)](#_bend_knees-lignes-85-104)
+  - [`_straighten_knees` (lignes 107-120)](#_straighten_knees-lignes-107-120)
+  - [`_publish` (lignes 123-124)](#_publish-lignes-123-124)
+  - [`move_arms` (lignes 127-139)](#move_arms-lignes-127-139)
+  - [`cartesian_ramp` (lignes 142-160)](#cartesian_ramp-lignes-142-160)
+  - [`_build_arg_parser` (lignes 163-174) -- CLI de `levee.py` seul](#_build_arg_parser-lignes-163-174----cli-de-leveepy-seul)
+  - [`run_lift_sequence` (lignes 177-267) -- approche/serrage/levée en standalone](#run_lift_sequence-lignes-177-267----approcheserragelevée-en-standalone)
+  - [`main` (lignes 270-297)](#main-lignes-270-297)
+- **[📄 5. `pivot_real.py` (193 lignes) -- le pivot seul, en standalone](#5-pivot_realpy-193-lignes----le-pivot-seul-en-standalone)**
+  - [Constantes (lignes 14-33)](#constantes-lignes-14-33)
+  - [`_checkpoint`/`_ease`/`_quintic_ease` (lignes 36-49)](#_checkpoint_ease_quintic_ease-lignes-36-49)
+  - [`_bend_knees`/`_straighten_knees` (lignes 52-87)](#_bend_knees_straighten_knees-lignes-52-87)
+  - [`run_pivot` (lignes 90-147) -- la séquence complète autonome](#run_pivot-lignes-90-147----la-séquence-complète-autonome)
+  - [`_build_arg_parser` (lignes 150-160)](#_build_arg_parser-lignes-150-160)
+  - [`main` (lignes 163-192)](#main-lignes-163-192)
+- **[📄 6. `levee_pivot.py` (287 lignes) -- l'orchestrateur final](#6-levee_pivotpy-287-lignes----lorchestrateur-final)**
+  - [Imports et helper (lignes 1-33)](#imports-et-helper-lignes-1-33)
+  - [Setup (lignes 36-52)](#setup-lignes-36-52)
+  - [Flags et flexion des genoux (lignes 54-67)](#flags-et-flexion-des-genoux-lignes-54-67)
+  - [Approche (lignes 69-85)](#approche-lignes-69-85)
+  - [Serrage et levée (lignes 87-106)](#serrage-et-levée-lignes-87-106)
+  - [Guard : pas de pivot demandé (lignes 108-110)](#guard-pas-de-pivot-demandé-lignes-108-110)
+  - [Rapproché + Pivot + Extension fusionnés (lignes 112-159)](#rapproché-pivot-extension-fusionnés-lignes-112-159)
+  - [Guard : pas de dépose demandée (lignes 167-169)](#guard-pas-de-dépose-demandée-lignes-167-169)
+  - [Baisse avant relâchement (lignes 171-178)](#baisse-avant-relâchement-lignes-171-178)
+  - [Désserrage (lignes 180-186)](#désserrage-lignes-180-186)
+  - [Écartement (lignes 188-196)](#écartement-lignes-188-196)
+  - [Translation arrière (lignes 198-203)](#translation-arrière-lignes-198-203)
+  - [Dégagement, dépivot, retour des bras (lignes 205-227)](#dégagement-dépivot-retour-des-bras-lignes-205-227)
+  - [Redressement des genoux et relâchement final (lignes 229-241)](#redressement-des-genoux-et-relâchement-final-lignes-229-241)
+  - [`_build_arg_parser` (lignes 246-274) -- toutes les options CLI](#_build_arg_parser-lignes-246-274----toutes-les-options-cli)
+  - [`main` (lignes 278-305)](#main-lignes-278-305)
+
 ---
 
-## 1. `lift_carton.py` (104 lignes) -- la géométrie et la cinématique inverse
+
+## 📄 1. `lift_carton.py` (104 lignes) -- la géométrie et la cinématique inverse
 
 ### Les chaînes cinématiques (lignes 3-19)
 
@@ -213,7 +278,7 @@ démarrage/arrêt brutal) toutes les rampes de mouvement du projet.
 
 ---
 
-## 2. `lever.py` (116 lignes) -- la classe qui parle au robot
+## 📄 2. `lever.py` (116 lignes) -- la classe qui parle au robot
 
 ### Constantes (lignes 8-12)
 
@@ -410,7 +475,7 @@ fonctionnent, indépendamment du reste de la séquence.
 
 ---
 
-## 3. `motion_state.py` (69 lignes) -- le verrou de sécurité
+## 📄 3. `motion_state.py` (69 lignes) -- le verrou de sécurité
 
 Une seule fonction : `ensure_motion_state(node, target, timeout, detour)`.
 
@@ -517,7 +582,7 @@ sur le node appelant (qui, lui, continue de vivre après cet appel).
 
 ---
 
-## 4. `levee.py` (298 lignes) -- bibliothèque de mouvement + script "lever seul"
+## 📄 4. `levee.py` (298 lignes) -- bibliothèque de mouvement + script "lever seul"
 
 ### Constantes géométriques et de timing (lignes 20-65)
 
@@ -957,7 +1022,7 @@ ou de Ctrl+C.
 
 ---
 
-## 5. `pivot_real.py` (193 lignes) -- le pivot seul, en standalone
+## 📄 5. `pivot_real.py` (193 lignes) -- le pivot seul, en standalone
 
 Sert deux usages : bibliothèque de constantes pour `levee_pivot.py`
 (`WAIST_JOINT_INDEX`, `WAIST_KP`, `WAIST_KD`, `_ease` renommée
@@ -1191,7 +1256,7 @@ Structure identique à `levee.py::main()` (même schéma init/vérif
 
 ---
 
-## 6. `levee_pivot.py` (287 lignes) -- l'orchestrateur final
+## 📄 6. `levee_pivot.py` (287 lignes) -- l'orchestrateur final
 
 Importe TOUT le reste (`lever.py`, `motion_state.py`, `levee.py`,
 `pivot_real.py`, `lift_carton.py`) et enchaîne les étapes dans

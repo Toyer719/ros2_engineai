@@ -26,9 +26,78 @@ comme une table des matières (quand et pourquoi chaque étape est
 déclenchée, avec quels paramètres) avant de plonger dans le détail de
 chaque Action Server.
 
+## Sommaire
+
+- **[📄 1. `field_topics.py` (21 lignes) -- la table de correspondance manette virtuelle](#1-field_topicspy-21-lignes----la-table-de-correspondance-manette-virtuelle)**
+- **[📄 2. `lift_carton.py` -- ce qui est spécifique à la simulation](#2-lift_cartonpy----ce-qui-est-spécifique-à-la-simulation)**
+  - [Constantes de scène (lignes 55-75)](#constantes-de-scène-lignes-55-75)
+  - [`carton_face_centers()` (lignes 78-121) -- lire la position du carton dans la scène MuJoCo](#carton_face_centers-lignes-78-121----lire-la-position-du-carton-dans-la-scène-mujoco)
+  - [`SimStateListener` (lignes 137-181) -- lire la position réelle du robot dans MuJoCo](#simstatelistener-lignes-137-181----lire-la-position-réelle-du-robot-dans-mujoco)
+  - [`world_to_robot_local()` (lignes 184-212) -- convertir une position monde en cible IK](#world_to_robot_local-lignes-184-212----convertir-une-position-monde-en-cible-ik)
+- **[📄 3. `chef_node.py` (371 lignes) -- l'orchestrateur](#3-chef_nodepy-371-lignes----lorchestrateur)**
+  - [Imports et constantes géométriques (lignes 1-92)](#imports-et-constantes-géométriques-lignes-1-92)
+  - [`__init__` -- deux rôles en un seul node (lignes 95-114)](#__init__----deux-rôles-en-un-seul-node-lignes-95-114)
+  - [Callbacks et relais LCM (lignes 117-129)](#callbacks-et-relais-lcm-lignes-117-129)
+  - [`_send_goal` (lignes 132-159) -- rendre une Action asynchrone bloquante](#_send_goal-lignes-132-159----rendre-une-action-asynchrone-bloquante)
+  - [`_goal_fields` et les méthodes de haut niveau (lignes 161-179)](#_goal_fields-et-les-méthodes-de-haut-niveau-lignes-161-179)
+  - [`_publish_step` (lignes 181-185)](#_publish_step-lignes-181-185)
+  - [`run_sequence()` (lignes 187-344) -- la chorégraphie complète](#run_sequence-lignes-187-344----la-chorégraphie-complète)
+  - [`main()` (lignes 347-371)](#main-lignes-347-371)
+- **[📄 4. `stand.py` (82 lignes) -- passage en position debout stabilisée](#4-standpy-82-lignes----passage-en-position-debout-stabilisée)**
+  - [`__init__` (lignes 14-21)](#__init__-lignes-14-21)
+  - [`_on_cancel`/`_wait_cancelable` (lignes 23-35)](#_on_cancel_wait_cancelable-lignes-23-35)
+  - [`_execute` (lignes 37-61)](#_execute-lignes-37-61)
+  - [`main()` (lignes 64-81)](#main-lignes-64-81)
+- **[📄 5. La marche : `walk_to.py` + `body_vel_bridge.py`](#5-la-marche-walk_topy-body_vel_bridgepy)**
+  - [`walk_to.py` -- même protocole que le robot réel](#walk_topy----même-protocole-que-le-robot-réel)
+  - [`body_vel_bridge.py` -- SIM UNIQUEMENT, absent du lancement réel](#body_vel_bridgepy----sim-uniquement-absent-du-lancement-réel)
+- **[📄 6. `lift.py` (447 lignes) -- prise du carton](#6-liftpy-447-lignes----prise-du-carton)**
+  - [Imports et constantes (lignes 1-67)](#imports-et-constantes-lignes-1-67)
+  - [`_quintic_ease`/`_rotate_xy` (lignes 70-84)](#_quintic_ease_rotate_xy-lignes-70-84)
+  - [`__init__`/`_on_cancel` (lignes 87-97)](#__init___on_cancel-lignes-87-97)
+  - [`_ensure_sim_state`/`_ensure_lever` (lignes 99-119)](#_ensure_sim_state_ensure_lever-lignes-99-119)
+  - [`_bend_knees` (lignes 121-144)](#_bend_knees-lignes-121-144)
+  - [`_move_arms`/`_hold` (lignes 146-166)](#_move_arms_hold-lignes-146-166)
+  - [`_straighten_knees`/`_release` (lignes 168-197)](#_straighten_knees_release-lignes-168-197)
+  - [`_execute` -- setup (lignes 199-270)](#_execute----setup-lignes-199-270)
+  - [`_execute` -- phases approche/serrage (lignes 314-339)](#_execute----phases-approcheserrage-lignes-314-339)
+  - [`_execute` -- fin de l'approche/serrage isolés (lignes 341-357)](#_execute----fin-de-lapprocheserrage-isolés-lignes-341-357)
+  - [`_execute` -- levée (lignes 359-427)](#_execute----levée-lignes-359-427)
+  - [`main()` (lignes 430-447) -- identique au motif de `stand.py`](#main-lignes-430-447----identique-au-motif-de-standpy)
+- **[📄 7. `pivot.py` (341 lignes) -- rotation du buste, carton tenu](#7-pivotpy-341-lignes----rotation-du-buste-carton-tenu)**
+  - [Constantes propres (lignes 21-77)](#constantes-propres-lignes-21-77)
+  - [`__init__`/`_ensure_lever`/`_ensure_sim_state` (lignes 87-122)](#__init___ensure_lever_ensure_sim_state-lignes-87-122)
+  - [`_publish_pose` (lignes 124-131) -- bras + jambes + buste en un message](#_publish_pose-lignes-124-131----bras-jambes-buste-en-un-message)
+  - [`_execute` -- setup et recalcul de la posture tenue (lignes 133-202)](#_execute----setup-et-recalcul-de-la-posture-tenue-lignes-133-202)
+  - [`_execute` -- rapproché fusionné avec le début du pivot (lignes 209-224)](#_execute----rapproché-fusionné-avec-le-début-du-pivot-lignes-209-224)
+  - [`_execute` -- pivot pur (lignes 226-237)](#_execute----pivot-pur-lignes-226-237)
+  - [`_execute` -- maintien annulable (lignes 239-250)](#_execute----maintien-annulable-lignes-239-250)
+  - [`_execute` -- extension fusionnée avec la fin (lignes 252-266)](#_execute----extension-fusionnée-avec-la-fin-lignes-252-266)
+  - [`_execute` -- dépivotage conditionnel (lignes 268-289)](#_execute----dépivotage-conditionnel-lignes-268-289)
+  - [`_execute` -- relâchement / libération partielle / maintien (lignes 291-321)](#_execute----relâchement-libération-partielle-maintien-lignes-291-321)
+  - [`main()` (lignes 324-341) -- identique au motif de `stand.py`](#main-lignes-324-341----identique-au-motif-de-standpy)
+- **[📄 8. `depose.py` (442 lignes) -- repose le carton](#8-deposepy-442-lignes----repose-le-carton)**
+  - [Constantes propres (lignes 23-53)](#constantes-propres-lignes-23-53)
+  - [`_quintic_ease`/`_rotate_xy` (lignes 56-66) -- dupliquées, identiques aux autres fichiers](#_quintic_ease_rotate_xy-lignes-56-66----dupliquées-identiques-aux-autres-fichiers)
+  - [`__init__`/`_ensure_sim_state`/`_ensure_lever` (lignes 72-103) -- structure identique à `pivot.py`](#__init___ensure_sim_state_ensure_lever-lignes-72-103----structure-identique-à-pivotpy)
+  - [`_bend_knees` (lignes 105-144) -- avec republication forcée bras+buste](#_bend_knees-lignes-105-144----avec-republication-forcée-brasbuste)
+  - [`_move_arms`/`_straighten_knees`/`_release` (lignes 146-184) -- identiques à `lift.py`](#_move_arms_straighten_knees_release-lignes-146-184----identiques-à-liftpy)
+  - [`_execute` -- setup et recalcul (lignes 186-255)](#_execute----setup-et-recalcul-lignes-186-255)
+  - [`_execute` -- tendre les bras, sans lâcher (lignes 274-283)](#_execute----tendre-les-bras-sans-lâcher-lignes-274-283)
+  - [`_execute` -- descente (lignes 285-301)](#_execute----descente-lignes-285-301)
+  - [`_execute` -- ouverture de la prise (lignes 303-325)](#_execute----ouverture-de-la-prise-lignes-303-325)
+  - [`_execute` -- écartement (lignes 327-344)](#_execute----écartement-lignes-327-344)
+  - [`_execute` -- translation arrière (lignes 346-371)](#_execute----translation-arrière-lignes-346-371)
+  - [`_execute` -- dégagement, relâchement du carton (lignes 373-379)](#_execute----dégagement-relâchement-du-carton-lignes-373-379)
+  - [`_execute` -- dépivot AVANT le retour des bras (lignes 381-408)](#_execute----dépivot-avant-le-retour-des-bras-lignes-381-408)
+  - [`_execute` -- fin (lignes 410-422)](#_execute----fin-lignes-410-422)
+  - [`main()` (lignes 425-442) -- identique au motif de `stand.py`](#main-lignes-425-442----identique-au-motif-de-standpy)
+- [Récapitulatif : différences avec le robot réel](#récapitulatif-différences-avec-le-robot-réel)
+
 ---
 
-## 1. `field_topics.py` (21 lignes) -- la table de correspondance manette virtuelle
+
+## 📄 1. `field_topics.py` (21 lignes) -- la table de correspondance manette virtuelle
 
 ```python
 BUTTON_INDEX = {
@@ -54,7 +123,7 @@ nom -- `chef_node.py` les utilise pour peupler ce message, `stand.py` et
 
 ---
 
-## 2. `lift_carton.py` -- ce qui est spécifique à la simulation
+## 📄 2. `lift_carton.py` -- ce qui est spécifique à la simulation
 
 Le fichier complet (`tools/robot_arm_ik/lift_carton.py`) contient la même
 cinématique inverse que la version robot réel (chaînes,
@@ -206,7 +275,7 @@ Résultat directement utilisable comme cible pour `solve_arm_ik`. Appelée
 
 ---
 
-## 3. `chef_node.py` (371 lignes) -- l'orchestrateur
+## 📄 3. `chef_node.py` (371 lignes) -- l'orchestrateur
 
 ### Imports et constantes géométriques (lignes 1-92)
 
@@ -570,7 +639,7 @@ indéfiniment si le thread ne se termine pas proprement).
 
 ---
 
-## 4. `stand.py` (82 lignes) -- passage en position debout stabilisée
+## 📄 4. `stand.py` (82 lignes) -- passage en position debout stabilisée
 
 ### `__init__` (lignes 14-21)
 
@@ -659,7 +728,7 @@ pour chacun (uniquement leurs différences, s'il y en a).
 
 ---
 
-## 5. La marche : `walk_to.py` + `body_vel_bridge.py`
+## 📄 5. La marche : `walk_to.py` + `body_vel_bridge.py`
 
 ### `walk_to.py` -- même protocole que le robot réel
 
@@ -983,7 +1052,7 @@ parallèle d'un timer, un seul thread suffit.
 
 ---
 
-## 6. `lift.py` (447 lignes) -- prise du carton
+## 📄 6. `lift.py` (447 lignes) -- prise du carton
 
 ### Imports et constantes (lignes 1-67)
 
@@ -1420,7 +1489,7 @@ s'arrête bras/carton tenus, en attente de `pivot()`.
 
 ---
 
-## 7. `pivot.py` (341 lignes) -- rotation du buste, carton tenu
+## 📄 7. `pivot.py` (341 lignes) -- rotation du buste, carton tenu
 
 ### Constantes propres (lignes 21-77)
 
@@ -1721,7 +1790,7 @@ bras/buste restent tenus à poids plein) ; (3) sinon (cas de
 
 ---
 
-## 8. `depose.py` (442 lignes) -- repose le carton
+## 📄 8. `depose.py` (442 lignes) -- repose le carton
 
 ### Constantes propres (lignes 23-53)
 
