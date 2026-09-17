@@ -111,24 +111,49 @@ def run_lift_and_pivot(node, lever, args):
 
     retract_start = _rotate_xy([args.pinch_x, SQUEEZE_Y, LIFT_Z], args.pinch_yaw_offset)
     retract_end = _rotate_xy([args.retract_x, SQUEEZE_Y, LIFT_Z], args.pinch_yaw_offset)
-    _checkpoint(f"rapproche le carton avant pivot -- X {args.pinch_x} -> {args.retract_x} "
-                f"({args.retract_duration:.1f}s)", confirm)
-    qL, qR = cartesian_ramp(lever, qL, wrist_rotation, retract_start, retract_end,
-                             qL, qL, args.retract_duration, args.dry_run)
+    depose_target = _rotate_xy([args.depose_x, SQUEEZE_Y, LIFT_Z], args.pinch_yaw_offset)
 
     angle_target = np.radians(args.angle_deg)
     n = max(1, int(args.pivot_duration * RATE_HZ))
+    if args.retract_duration + args.extend_duration > args.pivot_duration:
+        print(f"[ERREUR] --retract-duration ({args.retract_duration}) + --extend-duration "
+              f"({args.extend_duration}) depasse --pivot-duration ({args.pivot_duration}) -- "
+              "les deux se chevaucheraient, arret.", flush=True)
+        return
 
     if not args.dry_run:
         lever.set_gains(WAIST_JOINT_INDEX, WAIST_KP, WAIST_KD)
 
-    _checkpoint(f"pivot buste -- 0 -> {args.angle_deg:.0f}deg ({args.pivot_duration:.1f}s)", confirm)
+    # 2026-09-17 : rapproche/tend les bras FUSIONNES avec le pivot (etaient 2
+    # etapes sequentielles avant/apres, bras a l'arret entre chacune) -- sur
+    # demande explicite de l'utilisateur ("fluidifier"), le rapproche tourne
+    # maintenant PENDANT les premieres retract_duration secondes du pivot et
+    # le tend-les-bras PENDANT les dernieres extend_duration secondes, le
+    # buste tournant en continu sur toute la duree. Anchor null-space FIXE
+    # (capture avant la boucle, jamais reassigne) -- meme regle que partout
+    # ailleurs dans ce projet pour eviter la derive d'avant-bras.
+    anchor = qL.copy()
+    _checkpoint(
+        f"pivot buste + rapproche/tend les bras -- 0 -> {args.angle_deg:.0f}deg "
+        f"({args.pivot_duration:.1f}s, mouvement simultane)", confirm)
     for i in range(n + 1):
-        a = _pivot_ease(i / n)
-        waist = a * angle_target
+        t = i / RATE_HZ
+        waist = _pivot_ease(i / n) * angle_target
+        if t < args.retract_duration and args.retract_duration > 0:
+            a_arm = ease(t / args.retract_duration)
+            target = retract_start + a_arm * (retract_end - retract_start)
+        elif t > args.pivot_duration - args.extend_duration and args.extend_duration > 0:
+            a_arm = ease((t - (args.pivot_duration - args.extend_duration)) / args.extend_duration)
+            target = retract_end + a_arm * (depose_target - retract_end)
+        else:
+            target = retract_end
+        qL = solve_arm_ik(LEFT_CHAIN, HAND_OFFSET_LEFT, target, qL,
+                           lock_index=WRIST_CHAIN_INDEX, lock_angle=wrist_rotation, iters=10,
+                           null_space_pref=anchor)
+        qR = mirror_left_to_right(qL)
         if args.dry_run:
             if i in (0, n):
-                print(f"    [dry-run] t={i / RATE_HZ:.2f}s  waist={np.degrees(waist):.1f}deg")
+                print(f"    [dry-run] t={t:.2f}s  waist={np.degrees(waist):.1f}deg  x={target[0]:.3f}")
             continue
         _publish_with_waist(lever, qL, qR, waist)
         time.sleep(1.0 / RATE_HZ)
@@ -138,12 +163,6 @@ def run_lift_and_pivot(node, lever, args):
         for _ in range(max(1, int(args.hold_seconds * RATE_HZ))):
             _publish_with_waist(lever, qL, qR, angle_target)
             time.sleep(1.0 / RATE_HZ)
-
-    depose_target = _rotate_xy([args.depose_x, SQUEEZE_Y, LIFT_Z], args.pinch_yaw_offset)
-    _checkpoint(f"tend les bras pour deposer -- X {args.retract_x} -> {args.depose_x} "
-                f"({args.extend_duration:.1f}s), buste encore tourne", confirm)
-    qL, qR = cartesian_ramp(lever, qL, wrist_rotation, retract_end, depose_target,
-                             qL, qL, args.extend_duration, args.dry_run)
 
     if not run_depose:
         print("[INFO] only_phase termine -- carton tenu, buste toujours tourne, pas de depose.")
@@ -232,23 +251,23 @@ def _build_arg_parser():
     parser.add_argument("--wrist-rotation-deg", type=float, default=ELBOW_YAW_ROTATION_DEG)
     parser.add_argument("--walk-stance-scale", type=float, default=WALK_STANCE_SCALE)
     parser.add_argument("--angle-deg", type=float, default=20.0)
-    parser.add_argument("--pivot-duration", type=float, default=3.0)
-    parser.add_argument("--hold-seconds", type=float, default=1.1)
+    parser.add_argument("--pivot-duration", type=float, default=2.5)
+    parser.add_argument("--hold-seconds", type=float, default=0.9)
     parser.add_argument("--retract-x", type=float, default=0.19)
     parser.add_argument("--depose-x", type=float, default=0.40)
-    parser.add_argument("--retract-duration", type=float, default=0.7)
-    parser.add_argument("--extend-duration", type=float, default=0.7)
-    parser.add_argument("--release-ramp-seconds", type=float, default=1.1)
+    parser.add_argument("--retract-duration", type=float, default=0.6)
+    parser.add_argument("--extend-duration", type=float, default=0.6)
+    parser.add_argument("--release-ramp-seconds", type=float, default=0.9)
     parser.add_argument("--pre-release-drop", type=float, default=0.03)
-    parser.add_argument("--pre-release-drop-duration", type=float, default=1.5)
+    parser.add_argument("--pre-release-drop-duration", type=float, default=0.9)
     parser.add_argument("--depose-duration", type=float, default=4.0)
-    parser.add_argument("--open-duration", type=float, default=1.5)
+    parser.add_argument("--open-duration", type=float, default=1.3)
     parser.add_argument("--ecartement-gap-y", type=float, default=0.025)
-    parser.add_argument("--ecartement-duration", type=float, default=1.5)
+    parser.add_argument("--ecartement-duration", type=float, default=1.3)
     parser.add_argument("--retreat-back-x", type=float, default=0.19)
-    parser.add_argument("--retreat-back-duration", type=float, default=1.5)
-    parser.add_argument("--degagement-waypoint-duration", type=float, default=1.5)
-    parser.add_argument("--retreat-duration", type=float, default=1.5)
+    parser.add_argument("--retreat-back-duration", type=float, default=1.3)
+    parser.add_argument("--degagement-waypoint-duration", type=float, default=1.3)
+    parser.add_argument("--retreat-duration", type=float, default=1.0)
     parser.add_argument("--skip-motion-state", action="store_true")
     parser.add_argument("--only-phase", choices=["approche", "serrage", "levee", "pivot"], default=None)
     parser.add_argument("--dry-run", action="store_true")
