@@ -1,63 +1,158 @@
 # ros2_engineai
 
-Pipeline ROS2 pour piloter un robot humanoïde PM01 (EngineAI) : marche jusqu'à
-un carton, prise à deux bras, pivot du buste -- en simulation MuJoCo et sur
-le robot physique.
+Pipeline ROS2 pour piloter un robot humanoïde PM01 (EngineAI) : marche
+jusqu'à un carton, prise à deux bras, pivot du buste, dépose à un second
+poste -- **en simulation MuJoCo et sur le robot physique**.
 
-## Le projet
+## Objectif : pourquoi simu ET réel
 
-Codé sous `tools/virtual_gamepad/`, ce package ROS2 (`virtual_gamepad_ros`)
-orchestre une séquence GRAFCET via 5 Actions ROS2 indépendantes :
+Les deux versions partagent la même cinématique inverse des bras
+(`tools/robot_arm_ik/lift_carton.py`), mais répondent à des besoins
+différents :
 
-| node | rôle |
+- **La simulation** (`tools/virtual_gamepad/`) sert à itérer vite et sans
+  risque : tester un réglage, un nouvel angle, une nouvelle trajectoire sans
+  jamais exposer le robot physique à un mouvement mal calibré. C'est aussi
+  là que la géométrie du carton/de la caméra est validée avant d'aller sur
+  le vrai matériel.
+- **Le robot réel** (`package_sequence_bras_reel/`) est la version
+  simplifiée et durcie de la séquence, déployée une fois qu'un
+  comportement est validé en simulation -- avec des marges de sécurité
+  (vitesses réduites par défaut, confirmation manuelle entre chaque étape,
+  vérification systématique de l'état de la machine à états avant tout
+  mouvement).
+
+Les deux ne sont **pas architecturées pareil** (voir Architecture
+ci-dessous) : la simulation découpe la séquence en plusieurs nodes ROS2
+indépendants (comme `chef_node.py` qui orchestre `lift`/`pivot`/`depose`),
+alors que le robot réel tourne en un seul process qui enchaîne les étapes
+directement en mémoire -- un choix délibéré pour éviter un bug de "relais"
+entre nodes indépendants (deux calculs de cinématique inverse séparés
+peuvent converger sur des postures de bras différentes pour une même
+position de main).
+
+## Démonstration
+
+<!--
+  A remplir : glisser-déposer les vidéos directement dans la zone de texte
+  d'une issue ou PR GitHub pour obtenir une URL du type
+  https://github.com/<user>/<repo>/assets/<id>/xxxx.mp4, puis l'utiliser
+  ici avec une balise <video> (GitHub sait la lire nativement dans un
+  README) :
+
+  <video src="https://github.com/<user>/<repo>/assets/.../demo-simu.mp4" controls width="600"></video>
+
+  Alternative simple : convertir en GIF et l'inclure comme une image
+  classique (![demo](docs/videos/demo-simu.gif)).
+-->
+
+| Simulation (MuJoCo) | Robot réel |
 |---|---|
-| `chef_node.py` | orchestrateur -- envoie les buts, ne bouge jamais rien lui-même |
-| `walk_to.py` | marche (émulation manette LCM en sim, topic ROS2 natif sur le robot réel) |
-| `stand.py` | passage en position debout stabilisée (`pd_stand`) |
-| `lift.py` | prise du carton -- approche, serrage, levée (cinématique inverse) |
-| `pivot.py` | rotation du buste, carton tenu |
-| `depose.py` | repose le carton à un second poste |
+| *(vidéo à venir)* | *(vidéo à venir)* |
 
-La marche (jambes) et la prise (bras) utilisent deux mécanismes de commande
-complètement séparés : la marche passe par une manette virtuelle émulée sur
-LCM, la prise publie directement des positions articulaires cibles sur le
-topic ROS2 natif `/motion/joint_override_command`.
+## Architecture
 
-Pour le robot réel, l'équivalent vit dans `tools/joint_angle_commander/`
-(`orchestrateur.py`, `marche.py`, `levee.py`) -- même logique de prise
-(`lever.py`, `robot_arm_ik/lift_carton.py`), partagée avec la simulation.
+### Simulation -- plusieurs nodes ROS2 orchestrés
 
-## Séquence validée (2026-09-08)
+```mermaid
+flowchart LR
+    chef["chef_node.py<br/>(orchestrateur)"]
+    stand["stand.py"]
+    walk["walk_to.py"]
+    lift["lift.py"]
+    pivot["pivot.py"]
+    depose["depose.py"]
+    exec["src_executor<br/>(C++, MuJoCo)"]
 
+    chef -->|send_goal| stand
+    chef -->|send_goal| walk
+    chef -->|send_goal| lift
+    chef -->|send_goal| pivot
+    chef -->|send_goal| depose
+
+    stand -->|"/motion/joint_override_command"| exec
+    lift -->|"/motion/joint_override_command"| exec
+    pivot -->|"/motion/joint_override_command"| exec
+    depose -->|"/motion/joint_override_command"| exec
+    walk -->|"/motion/body_vel_cmd"| exec
 ```
-stand() → walk_to(Posage 1) → lift(approche) → lift(serrage)
-        → lift(levée) → pivot(180°) → stand()
+
+Chaque node est un **Action Server ROS2** indépendant, avec sa propre
+instance `Lever` (classe qui publie les positions articulaires). `lift`,
+`pivot` et `depose` recalculent chacun la posture du carton tenu à partir
+de sa position réelle (vision/vérité terrain), pour rester synchronisés
+malgré cette séparation en process distincts.
+
+### Robot réel -- un seul process, une séquence linéaire
+
+```mermaid
+flowchart LR
+    script["levee_pivot.py<br/>(un seul node ROS2)"]
+    exec["src_executor<br/>(sur le robot)"]
+
+    script -->|"approche() -> serrage() -> levee()<br/>-> pivot() -> depose() -> release()"| script
+    script -->|"/motion/joint_override_command"| exec
+    script -->|"/motion/set_motion_state"| exec
 ```
 
-Testée en simulation (MuJoCo), stable de bout en bout. Le transport en
-tenant le carton vers un second poste (marche après le pivot, puis
-`depose()`) a été essayé puis retiré de la séquence par défaut après une
-chute reproduite en télémétrie -- `depose.py` reste fonctionnel et
-appelable isolément.
+Une seule instance `Lever`, une seule fonction qui enchaîne les étapes --
+la posture des bras (`qL`/`qR`) circule directement de fonction en
+fonction en mémoire, sans jamais être recalculée depuis zéro.
 
-## Lancer en simulation
+## Librairies et prérequis
 
-Dans le conteneur avec `run.sh` + `run_mujoco.sh` déjà démarrés :
+- **ROS2 Humble** (`rclpy`, `rmw_cyclonedds_cpp`)
+- **EngineAI Native SDK** (`src_executor`, machine à états, pont LCM) --
+  fourni séparément, pas dans ce dépôt
+- **MuJoCo** (simulation physique, via le SDK EngineAI)
+- **NumPy** (cinématique inverse, `robot_arm_ik/lift_carton.py`)
+- **LCM** (`python3-lcm`, communication bas niveau avec la simulation)
+- **OpenCV** (`cv2`) + ArUco -- détection du carton par vision
+- **Intel RealSense SDK** (`pyrealsense2`) -- caméra du robot réel
+  uniquement (la simulation utilise une caméra fantôme, sans RealSense)
+
+## Exécution
+
+### Simulation
 
 ```bash
+# Terminal 1 : la physique
+cd <sdk>
+./scripts/run_mujoco.sh pm01_edu_carton
+
+# Terminal 2 : le "cerveau" (marche, machine à états)
+cd <sdk>
+source /opt/ros/humble/setup.bash
+./run.sh pm01_edu_carton
+
+# Terminal 3 : la séquence complète
+cd tools/virtual_gamepad/ros_ws
+export ROS_DOMAIN_ID=69
 source /opt/ros/humble/setup.bash
 source <sdk>/build/ros2_env/install/local_setup.bash
-source tools/virtual_gamepad/ros_ws/install/setup.bash
-ros2 launch virtual_gamepad_ros virtual_gamepad_blind.launch.py
+colcon build --packages-select virtual_gamepad_interfaces virtual_gamepad_ros
+source install/setup.bash
+ros2 launch virtual_gamepad_ros virtual_gamepad.launch.py
 ```
+
+### Robot réel
+
+```bash
+cd package_sequence_bras_reel
+python3 levee_pivot.py --angle-deg 90
+```
+
+Confirmation manuelle entre chaque étape par défaut (Entrée pour continuer,
+Ctrl+C pour arrêter) -- ajouter `--no-confirm` pour enchaîner sans pause,
+`--dry-run` pour vérifier la trajectoire sans rien publier au robot.
 
 ## Structure du dépôt
 
 ```
-tools/virtual_gamepad/ros_ws/    package ROS2 principal (nodes + interfaces .action)
-tools/joint_angle_commander/     scripts robot réel (marche, levée, IK)
-tools/robot_arm_ik/              cinématique inverse des bras, partagée sim/réel
-tools/vision/                    détection ArUco du carton (expérimental)
-assets/                          scène MuJoCo, configs du robot simulé
-docs/                            guides de lancement (Docker, ROS2, caméra)
+tools/virtual_gamepad/ros_ws/    package ROS2 de la simulation (nodes + interfaces .action)
+package_sequence_bras_reel/      sequence bras robot reel, simplifiee, un seul process
+tools/robot_arm_ik/              cinematique inverse des bras, partagee sim/reel
+tools/vision/                    detection ArUco du carton, camera pelvis (sim + reel)
+assets/                          scene MuJoCo, configs du robot simule
+docs/                            guides de lancement (Docker, ROS2, camera)
 ```
