@@ -35,10 +35,12 @@ position de main).
 
 | Simulation (MuJoCo) | Robot réel |
 |---|---|
-| [▶ Voir la vidéo](docs/videos/demo-simu.mp4) | [▶ Voir la vidéo](docs/videos/demo-reel.mp4) |
+| [▶ Voir la vidéo](https://raw.githubusercontent.com/Toyer719/ros2_engineai/main/docs/videos/demo-simu.mp4) | [▶ Voir la vidéo](https://raw.githubusercontent.com/Toyer719/ros2_engineai/main/docs/videos/demo-reel.mp4) |
 
-*(le lien ouvre le lecteur vidéo natif de GitHub -- clic droit + "ouvrir
-dans un nouvel onglet" si le rendu inline ne se déclenche pas)*
+*(lien direct vers le fichier brut -- la page de prévisualisation
+GitHub refuse d'afficher les fichiers binaires au-delà d'une certaine
+taille, mais le fichier lui-même est intact et se lit normalement via
+ce lien)*
 
 ## Architecture
 
