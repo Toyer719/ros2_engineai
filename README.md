@@ -33,9 +33,16 @@ position de main).
 
 ## Démonstration
 
-https://github.com/user-attachments/assets/b2cbb9ed-864f-400c-91af-6d2eb987d223
-
-https://github.com/user-attachments/assets/f4f9cb6e-eddb-4ac3-b14e-eedf39d95371
+<table>
+<tr>
+<th>Simulation (MuJoCo)</th>
+<th>Robot réel</th>
+</tr>
+<tr>
+<td><video src="https://github.com/user-attachments/assets/b2cbb9ed-864f-400c-91af-6d2eb987d223" width="360" controls></video></td>
+<td><video src="https://github.com/user-attachments/assets/f4f9cb6e-eddb-4ac3-b14e-eedf39d95371" width="360" controls></video></td>
+</tr>
+</table>
 
 ## Architecture
 
