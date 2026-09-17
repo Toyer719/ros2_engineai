@@ -104,6 +104,9 @@ fonction en mémoire, sans jamais être recalculée depuis zéro.
 - [`docs/CODE_SIMULATION.md`](docs/CODE_SIMULATION.md) -- explication
   bloc par bloc de tout le code de la simulation (`chef_node.py` et les
   5 Action Servers qu'il orchestre).
+- [`docs/FONCTIONS_MOUVEMENT.md`](docs/FONCTIONS_MOUVEMENT.md) --
+  catalogue de toutes les capacités de mouvement (viser, pivoter, marcher...),
+  quelle fonction les implémente et comment les appeler.
 
 ## Librairies et prérequis
 
