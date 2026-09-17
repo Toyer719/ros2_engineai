@@ -10,9 +10,21 @@ les deux partagent la même cinématique inverse (`solve_arm_ik`,
 document ne la reproduit pas mais ne saute AUCUN bloc qui lui est propre.
 
 Ordre de lecture : les fondations d'abord (topics, géométrie, IK
-partagée), puis chaque Action Server dans l'ordre où `chef_node.py` les
-appelle (`stand` → `walk_to` → `lift` → `pivot` → `depose`),
-l'orchestrateur en dernier.
+partagée), puis `chef_node.py`, puis chaque Action Server dans l'ordre où
+`chef_node.py` les appelle (`stand` → `walk_to` → `lift` → `pivot` →
+`depose`).
+
+**Pourquoi l'orchestrateur AVANT les Action Servers ici, contrairement à
+[`CODE_ROBOT_REEL.md`](CODE_ROBOT_REEL.md)** (fondations d'abord,
+orchestrateur en dernier) : sur le robot réel, `levee_pivot.py`
+**importe et utilise directement** les fonctions de `levee.py` -- il faut
+connaître ces fonctions avant de pouvoir lire `levee_pivot.py`. En
+simulation, `chef_node.py` ne dépend d'AUCUN code interne de `lift.py`/
+`pivot.py`/`depose.py` -- il les appelle comme des boîtes noires via ROS2
+(`send_goal`), sans rien en importer. Le lire en premier fonctionne donc
+comme une table des matières (quand et pourquoi chaque étape est
+déclenchée, avec quels paramètres) avant de plonger dans le détail de
+chaque Action Server.
 
 ---
 
