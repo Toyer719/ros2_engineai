@@ -9,29 +9,6 @@ import time
 
 import numpy as np
 
-# --- Frequence de commande -------------------------------------------------
-# Une seule valeur pour toute la sequence (bras ET buste). Avant : 65 Hz dans
-# levee.py mais 30 Hz dans pivot_real.py -- en pratique deja sans grand effet
-# des lors que c'est levee_pivot.py qui orchestre la sequence complete,
-# puisqu'il importait RATE_HZ depuis levee.py (donc le pivot fusionne
-# tournait deja a 65 Hz) ; seul un lancement standalone de pivot_real.py
-# utilisait encore 30 Hz.
-#
-# Valeur choisie ici (100 Hz) verifiee le 2026-09-18 contre 2 sources :
-# 1) Guide_PM01_FR.pdf (doc officielle EngineAI), section "Interface de
-#    controle par override des articulations" (/motion/joint_override_command
-#    -- exactement le topic utilise par lever.py) : "Frequence de publication
-#    recommandee : 100 Hz, pour garantir un controle fluide". Frequence
-#    minimale documentee ailleurs dans le guide : 50 Hz ("une frequence trop
-#    basse peut entrainer un mouvement discontinu").
-# 2) Les logs de src_executor (sim, meme executable) montrent une boucle
-#    interne a 500 Hz (periode 0.002s, "[PeriodicTask] Start [motion_task]
-#    with period (0.002 s)") -- tres au-dessus de 100 Hz, donc aucun message
-#    n'est perdu a cette frequence.
-# L'idee de tout aligner sur 20 Hz (evoquee dans une note de presentation, en
-# supposant le PC interne du robot cadence a 20 Hz) reposait sur une
-# hypothese non verifiee et contredite par la doc officielle -- 20 Hz est
-# meme EN DESSOUS du minimum documente (50 Hz).
 RATE_HZ = 100
 
 MOTION_STATE_TIMEOUT = 3.0
