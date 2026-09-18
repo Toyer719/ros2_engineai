@@ -1,0 +1,4 @@
+# rclpy et interface_protocol viennent de l'environnement ROS2 sourcee
+# (/opt/ros/humble/setup.bash + l'overlay du workspace EngineAI), pas de pip
+# -- non listes ici.
+numpy

@@ -10,22 +10,20 @@ import rclpy
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from lever import Lever
 from motion_state import ensure_motion_state
-from levee import (
-    APPROACH_LIFT_DURATION,
-    LEFT_CHAIN, RIGHT_CHAIN, HAND_OFFSET_LEFT, HAND_OFFSET_RIGHT,
+from lift_carton import mirror_left_to_right, solve_arm_ik, ease, forward_kinematics
+from robot_common import (
+    RATE_HZ, MOTION_STATE_TIMEOUT, WAIST_JOINT_INDEX, WAIST_KP, WAIST_KD,
     LEFT_JOINT_INDICES, RIGHT_JOINT_INDICES, Q_LEFT_HOME, Q_RIGHT_HOME,
-    WAYPOINT_Q_LEFT, WAYPOINT_Q_RIGHT, WAYPOINT_DURATION, WRIST_CHAIN_INDEX,
-    PINCH_X, PINCH_Y, SQUEEZE_Y, LIFT_Z, APPROACH_DURATION, SQUEEZE_DURATION,
-    LIFT_DURATION, HOLD_SECONDS, RATE_HZ, WALK_STANCE_SCALE,
-    WALK_STANCE_STIFFNESS_SCALE, WALK_STANCE_DURATION, LEVEE_STIFFNESS, LEVEE_DAMPING,
-    MOTION_STATE_TIMEOUT, ELBOW_YAW_ROTATION_DEG,
-    _checkpoint, _rotate_xy, solve_arm_ik, _bend_knees, _straighten_knees,
-    _publish, move_arms, ease, forward_kinematics, cartesian_ramp,
+    WAYPOINT_Q_LEFT, WAYPOINT_Q_RIGHT, WRIST_CHAIN_INDEX,
+    WALK_STANCE_STIFFNESS_SCALE, _checkpoint, _bend_knees, _straighten_knees,
 )
-from pivot_real import WAIST_JOINT_INDEX, WAIST_KP, WAIST_KD, _ease as _pivot_ease
-
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "robot_arm_ik"))
-from lift_carton import mirror_left_to_right
+from levee import (
+    APPROACH_LIFT_DURATION, LEFT_CHAIN, HAND_OFFSET_LEFT,
+    WAYPOINT_DURATION, PINCH_X, PINCH_Y, SQUEEZE_Y, LIFT_Z, APPROACH_DURATION,
+    SQUEEZE_DURATION, LIFT_DURATION, HOLD_SECONDS, WALK_STANCE_SCALE,
+    WALK_STANCE_DURATION, LEVEE_STIFFNESS, LEVEE_DAMPING, ELBOW_YAW_ROTATION_DEG,
+    _rotate_xy, _publish, move_arms, cartesian_ramp,
+)
 
 
 def _publish_with_waist(lever, qL, qR, waist):
@@ -138,7 +136,7 @@ def run_lift_and_pivot(node, lever, args):
         f"({args.pivot_duration:.1f}s, mouvement simultane)", confirm)
     for i in range(n + 1):
         t = i / RATE_HZ
-        waist = _pivot_ease(i / n) * angle_target
+        waist = ease(i / n) * angle_target
         if t < args.retract_duration and args.retract_duration > 0:
             a_arm = ease(t / args.retract_duration)
             target = retract_start + a_arm * (retract_end - retract_start)
@@ -212,7 +210,7 @@ def run_lift_and_pivot(node, lever, args):
     _checkpoint(f"depivot -- {args.angle_deg:.0f}deg -> 0deg ({args.pivot_duration:.1f}s), "
                 "CARTON DEJA LACHE, avant le retour des bras", confirm)
     for i in range(n + 1):
-        a = _pivot_ease(i / n)
+        a = ease(i / n)
         waist = (1.0 - a) * angle_target
         if args.dry_run:
             if i in (0, n):

@@ -10,37 +10,16 @@ import rclpy
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from lever import Lever
 from motion_state import ensure_motion_state
-
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "robot_arm_ik"))
 from lift_carton import (
     LEFT_CHAIN, RIGHT_CHAIN, HAND_OFFSET_LEFT, HAND_OFFSET_RIGHT, solve_arm_ik, ease,
     forward_kinematics, mirror_left_to_right,
 )
-
-LEFT_JOINT_INDICES = [13, 14, 15, 16, 17]
-RIGHT_JOINT_INDICES = [18, 19, 20, 21, 22]
-WRIST_CHAIN_INDEX = 4
-
-Q_LEFT_HOME = np.array([0.000879, 0.075284, -0.000233, -0.126397, -0.000033])
-Q_RIGHT_HOME = np.array([0.000885, -0.075161, 0.000241, -0.126390, 0.000033])
-
-WAYPOINT_Q_LEFT = np.radians([30.0, 5.0, 0.0, -110.0, 0.0])
-WAYPOINT_Q_RIGHT = np.radians([30.0, -5.0, 0.0, -110.0, 0.0])
-
-LEFT_HIP_PITCH_INDEX = 0
-RIGHT_HIP_PITCH_INDEX = 6
-LEFT_KNEE_PITCH_INDEX = 3
-RIGHT_KNEE_PITCH_INDEX = 9
-LEFT_ANKLE_PITCH_INDEX = 4
-RIGHT_ANKLE_PITCH_INDEX = 10
-WALK_STANCE_HIP_PITCH_L = np.radians(-6.9)
-WALK_STANCE_HIP_PITCH_R = np.radians(-5.2)
-WALK_STANCE_KNEE_L = np.radians(11.7)
-WALK_STANCE_KNEE_R = np.radians(10.5)
-WALK_STANCE_ANKLE_PITCH_L = np.radians(-4.8)
-WALK_STANCE_ANKLE_PITCH_R = np.radians(-5.2)
-
-RATE_HZ = 65
+from robot_common import (
+    RATE_HZ, MOTION_STATE_TIMEOUT,
+    LEFT_JOINT_INDICES, RIGHT_JOINT_INDICES, WRIST_CHAIN_INDEX,
+    Q_LEFT_HOME, Q_RIGHT_HOME, WAYPOINT_Q_LEFT, WAYPOINT_Q_RIGHT,
+    WALK_STANCE_STIFFNESS_SCALE, _checkpoint, _bend_knees, _straighten_knees,
+)
 
 PINCH_X = 0.216
 PINCH_Y = 0.22
@@ -53,71 +32,20 @@ SQUEEZE_DURATION = 2.1
 LIFT_DURATION = 2.0
 HOLD_SECONDS = 0.0
 RELEASE_RAMP_SECONDS = 4.0
-MOTION_STATE_TIMEOUT = 3.0
 
 ELBOW_YAW_ROTATION_DEG = 0.0
 
 WALK_STANCE_SCALE = 0.0
-WALK_STANCE_STIFFNESS_SCALE = 1.8
 WALK_STANCE_DURATION = 1.9
 
 LEVEE_STIFFNESS = 130.0
 LEVEE_DAMPING = 3.0
 
 
-def _checkpoint(message, confirm):
-    print(f"[ETAPE] {message}", flush=True)
-    if confirm:
-        input("        Verifie le robot, puis Entree pour continuer (Ctrl+C pour arreter)... ")
-
-
 def _rotate_xy(point, yaw_offset):
     x, y, z = point
     c, s = np.cos(yaw_offset), np.sin(yaw_offset)
     return np.array([x * c - y * s, x * s + y * c, z])
-
-
-def _quintic_ease(t):
-    t = max(0.0, min(1.0, t))
-    return t ** 3 * (10 - 15 * t + 6 * t ** 2)
-
-
-def _bend_knees(lever, scale, stiffness_scale, duration, rate_hz=RATE_HZ, dry_run=False):
-    if dry_run:
-        print(f"    [dry-run] flexion genoux -- scale={scale} duration={duration}s")
-        return
-    for idx, kp, kd in [
-        (LEFT_HIP_PITCH_INDEX, 200.0, 5.0), (RIGHT_HIP_PITCH_INDEX, 200.0, 5.0),
-        (LEFT_KNEE_PITCH_INDEX, 450.0, 5.0), (RIGHT_KNEE_PITCH_INDEX, 450.0, 5.0),
-        (LEFT_ANKLE_PITCH_INDEX, 400.0, 2.0), (RIGHT_ANKLE_PITCH_INDEX, 400.0, 2.0),
-    ]:
-        lever.set_gains(idx, kp * stiffness_scale, kd * stiffness_scale)
-    n = max(1, int(duration * rate_hz))
-    for i in range(n + 1):
-        a = _quintic_ease(i / n)
-        lever[LEFT_HIP_PITCH_INDEX] = float(a * scale * WALK_STANCE_HIP_PITCH_L)
-        lever[RIGHT_HIP_PITCH_INDEX] = float(a * scale * WALK_STANCE_HIP_PITCH_R)
-        lever[LEFT_KNEE_PITCH_INDEX] = float(a * scale * WALK_STANCE_KNEE_L)
-        lever[RIGHT_KNEE_PITCH_INDEX] = float(a * scale * WALK_STANCE_KNEE_R)
-        lever[LEFT_ANKLE_PITCH_INDEX] = float(a * scale * WALK_STANCE_ANKLE_PITCH_L)
-        lever[RIGHT_ANKLE_PITCH_INDEX] = float(a * scale * WALK_STANCE_ANKLE_PITCH_R)
-        time.sleep(1.0 / rate_hz)
-
-
-def _straighten_knees(lever, scale, stiffness_scale, duration, rate_hz=RATE_HZ, dry_run=False):
-    if dry_run:
-        print(f"    [dry-run] redressement genoux -- scale={scale} duration={duration}s")
-        return
-    n = max(1, int(duration * rate_hz))
-    for i in range(n + 1):
-        a = 1.0 - _quintic_ease(i / n)
-        lever[LEFT_HIP_PITCH_INDEX] = float(a * scale * WALK_STANCE_HIP_PITCH_L)
-        lever[RIGHT_HIP_PITCH_INDEX] = float(a * scale * WALK_STANCE_HIP_PITCH_R)
-        lever[LEFT_KNEE_PITCH_INDEX] = float(a * scale * WALK_STANCE_KNEE_L)
-        lever[RIGHT_KNEE_PITCH_INDEX] = float(a * scale * WALK_STANCE_KNEE_R)
-        lever[LEFT_ANKLE_PITCH_INDEX] = float(a * scale * WALK_STANCE_ANKLE_PITCH_L)
-        lever[RIGHT_ANKLE_PITCH_INDEX] = float(a * scale * WALK_STANCE_ANKLE_PITCH_R)
-        time.sleep(1.0 / rate_hz)
 
 
 def _publish(lever, qL, qR):

@@ -10,81 +10,13 @@ import rclpy
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from lever import Lever
 from motion_state import ensure_motion_state
+from lift_carton import ease as _ease
+from robot_common import (
+    RATE_HZ, MOTION_STATE_TIMEOUT, WAIST_JOINT_INDEX, WAIST_KP, WAIST_KD,
+    WALK_STANCE_STIFFNESS_SCALE, _checkpoint, _bend_knees, _straighten_knees,
+)
 
-WAIST_JOINT_INDEX = 12
-WAIST_KP = 150.0
-WAIST_KD = 3.0
-RATE_HZ = 30
-MOTION_STATE_TIMEOUT = 3.0
-
-LEFT_HIP_PITCH_INDEX = 0
-RIGHT_HIP_PITCH_INDEX = 6
-LEFT_KNEE_PITCH_INDEX = 3
-RIGHT_KNEE_PITCH_INDEX = 9
-LEFT_ANKLE_PITCH_INDEX = 4
-RIGHT_ANKLE_PITCH_INDEX = 10
-WALK_STANCE_HIP_PITCH_L = np.radians(-6.9)
-WALK_STANCE_HIP_PITCH_R = np.radians(-5.2)
-WALK_STANCE_KNEE_L = np.radians(11.7)
-WALK_STANCE_KNEE_R = np.radians(10.5)
-WALK_STANCE_ANKLE_PITCH_L = np.radians(-4.8)
-WALK_STANCE_ANKLE_PITCH_R = np.radians(-5.2)
-WALK_STANCE_STIFFNESS_SCALE = 1.8
 WALK_STANCE_DURATION = 3.0
-
-
-def _checkpoint(message, confirm):
-    print(f"[ETAPE] {message}", flush=True)
-    if confirm:
-        input("        Verifie le robot, puis Entree pour continuer (Ctrl+C pour arreter)... ")
-
-
-def _ease(t):
-    t = max(0.0, min(1.0, t))
-    return t * t * (3 - 2 * t)
-
-
-def _quintic_ease(t):
-    t = max(0.0, min(1.0, t))
-    return t ** 3 * (10 - 15 * t + 6 * t ** 2)
-
-
-def _bend_knees(lever, scale, stiffness_scale, duration, dry_run=False):
-    if dry_run:
-        print(f"    [dry-run] flexion genoux -- scale={scale} duration={duration}s")
-        return
-    for idx, kp, kd in [
-        (LEFT_HIP_PITCH_INDEX, 200.0, 5.0), (RIGHT_HIP_PITCH_INDEX, 200.0, 5.0),
-        (LEFT_KNEE_PITCH_INDEX, 450.0, 5.0), (RIGHT_KNEE_PITCH_INDEX, 450.0, 5.0),
-        (LEFT_ANKLE_PITCH_INDEX, 400.0, 2.0), (RIGHT_ANKLE_PITCH_INDEX, 400.0, 2.0),
-    ]:
-        lever.set_gains(idx, kp * stiffness_scale, kd * stiffness_scale)
-    n = max(1, int(duration * RATE_HZ))
-    for i in range(n + 1):
-        a = _quintic_ease(i / n)
-        lever[LEFT_HIP_PITCH_INDEX] = float(a * scale * WALK_STANCE_HIP_PITCH_L)
-        lever[RIGHT_HIP_PITCH_INDEX] = float(a * scale * WALK_STANCE_HIP_PITCH_R)
-        lever[LEFT_KNEE_PITCH_INDEX] = float(a * scale * WALK_STANCE_KNEE_L)
-        lever[RIGHT_KNEE_PITCH_INDEX] = float(a * scale * WALK_STANCE_KNEE_R)
-        lever[LEFT_ANKLE_PITCH_INDEX] = float(a * scale * WALK_STANCE_ANKLE_PITCH_L)
-        lever[RIGHT_ANKLE_PITCH_INDEX] = float(a * scale * WALK_STANCE_ANKLE_PITCH_R)
-        time.sleep(1.0 / RATE_HZ)
-
-
-def _straighten_knees(lever, scale, stiffness_scale, duration, dry_run=False):
-    if dry_run:
-        print(f"    [dry-run] redressement genoux -- scale={scale} duration={duration}s")
-        return
-    n = max(1, int(duration * RATE_HZ))
-    for i in range(n + 1):
-        a = 1.0 - _quintic_ease(i / n)
-        lever[LEFT_HIP_PITCH_INDEX] = float(a * scale * WALK_STANCE_HIP_PITCH_L)
-        lever[RIGHT_HIP_PITCH_INDEX] = float(a * scale * WALK_STANCE_HIP_PITCH_R)
-        lever[LEFT_KNEE_PITCH_INDEX] = float(a * scale * WALK_STANCE_KNEE_L)
-        lever[RIGHT_KNEE_PITCH_INDEX] = float(a * scale * WALK_STANCE_KNEE_R)
-        lever[LEFT_ANKLE_PITCH_INDEX] = float(a * scale * WALK_STANCE_ANKLE_PITCH_L)
-        lever[RIGHT_ANKLE_PITCH_INDEX] = float(a * scale * WALK_STANCE_ANKLE_PITCH_R)
-        time.sleep(1.0 / RATE_HZ)
 
 
 def run_pivot(lever, angle_deg, pivot_duration, hold_seconds, release_ramp_seconds,
